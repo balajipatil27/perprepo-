@@ -20,23 +20,56 @@ from models import ModelComparator
 # Initialize Flask app
 app = Flask(__name__)
 
-# =========== FIX 1: Use simpler CORS config ===========
-# Instead of resources={r"/*": {"origins": "*"}}, use:
-CORS(app, origins=["https://cool-liger-905e74.netlify.app", "http://localhost:3000", "http://localhost:5000"])
+# ============ CRITICAL CORS FIX ============
+# Allow specific origins including your Netlify domain
+allowed_origins = [
+    "https://cool-liger-905e74.netlify.app",
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000"
+]
 
-# OR to allow all origins (for testing):
-# CORS(app)
+# Configure CORS properly
+CORS(app, 
+     origins=allowed_origins,
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "X-Admin-Token", "Accept", "Origin"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     expose_headers=["Content-Disposition"],
+     max_age=600)
 
-# =========== FIX 2: Add specific headers ===========
+# Manual CORS middleware as backup
 @app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://cool-liger-905e74.netlify.app')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Admin-Token')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    
+    if origin and origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
     return response
 
-# Rest of your code remains the same...
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        origin = request.headers.get('Origin')
+        
+        if origin in allowed_origins:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            response.headers['Access-Control-Allow-Origin'] = '*'
+        
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Admin-Token'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '86400'
+        
+        return response
+
+# ============ ORIGINAL CONFIGURATION ============
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///datasets.db'
