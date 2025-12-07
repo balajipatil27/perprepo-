@@ -19,7 +19,24 @@ from models import ModelComparator
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# =========== FIX 1: Use simpler CORS config ===========
+# Instead of resources={r"/*": {"origins": "*"}}, use:
+CORS(app, origins=["https://cool-liger-905e74.netlify.app", "http://localhost:3000", "http://localhost:5000"])
+
+# OR to allow all origins (for testing):
+# CORS(app)
+
+# =========== FIX 2: Add specific headers ===========
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'https://cool-liger-905e74.netlify.app')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Admin-Token')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+# Rest of your code remains the same...
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///datasets.db'
