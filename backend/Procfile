@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+=======
+web: gunicorn app:app
+>>>>>>> 423a71937eba20150be1ad2a12e4e36ba1cca13c
