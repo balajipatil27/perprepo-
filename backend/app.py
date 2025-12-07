@@ -1,20 +1,23 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
 import uuid
 import os
 import json
-from werkzeug.utils import secure_filename
-from datetime import datetime, timedelta
 import time
 import threading
+from werkzeug.utils import secure_filename
+from datetime import datetime, timedelta
+import traceback
 
+# Import our modules
+from database import db, Dataset, ProcessingJob
+from analytics import SimpleAnalytics
 from preprocessing import DataPreprocessor
 from models import ModelComparator
-from database import db, Dataset, ProcessingJob
-from analytics import AnalyticsTracker
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
@@ -22,242 +25,322 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///datasets.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['PROCESSED_FOLDER'] = 'processed'
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 
-# Ensure upload folder exists
+# Create necessary directories
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-# Initialize database
+# Initialize extensions
 db.init_app(app)
-analytics = AnalyticsTracker(db)
+analytics = SimpleAnalytics('analytics_data.json')
 
 # Create tables
 with app.app_context():
     db.create_all()
 
-# Global variables
+# Global storage for jobs
 processing_jobs = {}
 
-# Helper to generate session ID
-def get_or_create_session():
-    """Get or create session ID from cookie"""
+# ==================== HELPER FUNCTIONS ====================
+
+def get_or_create_session_id():
+    """Get or create a session ID from cookies or generate new"""
     session_id = request.cookies.get('session_id')
     if not session_id:
         session_id = str(uuid.uuid4())
     return session_id
 
-# Track page view decorator
-def track_page_view(page_name):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            session_id = get_or_create_session()
-            analytics.track_page_view(session_id, page_name)
-            return func(*args, **kwargs)
-        wrapper.__name__ = func.__name__
-        return wrapper
-    return decorator
+def save_uploaded_file(file):
+    """Save uploaded file and return filepath"""
+    if file.filename == '':
+        raise ValueError("No file selected")
+    
+    # Generate unique filename
+    file_id = str(uuid.uuid4())
+    original_filename = secure_filename(file.filename)
+    filename = f"{file_id}_{original_filename}"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    
+    # Save file
+    file.save(filepath)
+    
+    return filepath, original_filename, file_id
 
-# API Routes
+def read_dataset_file(filepath):
+    """Read dataset file based on extension"""
+    if filepath.endswith('.csv'):
+        return pd.read_csv(filepath)
+    elif filepath.endswith('.xlsx'):
+        return pd.read_excel(filepath, engine='openpyxl')
+    elif filepath.endswith('.xls'):
+        return pd.read_excel(filepath)
+    else:
+        raise ValueError("Unsupported file format. Use CSV or Excel files.")
+
+def track_request(action, page, details=None):
+    """Track API request"""
+    try:
+        session_id = get_or_create_session_id()
+        analytics.track_page_view(session_id, page, action, details)
+    except:
+        pass  # Silently fail tracking
+
+def create_response(data, status=200, session_id=None):
+    """Create standardized response"""
+    response = jsonify(data)
+    if session_id and not request.cookies.get('session_id'):
+        response.set_cookie('session_id', session_id, max_age=30*24*60*60)
+    return response, status
+
+# ==================== API ROUTES ====================
+
 @app.route('/')
-@track_page_view('home')
 def home():
-    return jsonify({
-        'message': 'Data Preprocessing API', 
+    """Home endpoint"""
+    return create_response({
+        'message': 'DataPrePro API',
         'status': 'running',
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'endpoints': {
+            'GET /': 'API info',
+            'GET /health': 'Health check',
+            'POST /upload': 'Upload dataset',
+            'GET /dataset/<id>/info': 'Get dataset info',
+            'POST /dataset/<id>/preprocess': 'Preprocess dataset',
+            'GET /job/<id>/status': 'Get job status',
+            'POST /dataset/<id>/compare': 'Compare models',
+            'GET /download/<filename>': 'Download file',
+            'GET /api/analytics/dashboard': 'Analytics dashboard',
+            'GET /api/analytics/export': 'Export analytics'
+        }
     })
 
 @app.route('/health')
 def health_check():
     """Health check endpoint"""
-    return jsonify({
+    return create_response({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'total_sessions': analytics.UserSession.query.count()
+        'database': 'connected',
+        'analytics': 'active'
     })
 
 @app.route('/upload', methods=['POST'])
 def upload_dataset():
     """Upload a dataset file"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    # Generate unique ID
-    dataset_id = str(uuid.uuid4())
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], f"{dataset_id}_{filename}")
-    
-    # Save file
-    file.save(filepath)
-    
     try:
-        # Read file
-        if filename.endswith('.csv'):
-            df = pd.read_csv(filepath)
-        elif filename.endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(filepath)
-        else:
-            return jsonify({'error': 'Unsupported file format'}), 400
+        if 'file' not in request.files:
+            return create_response({'error': 'No file uploaded'}, 400)
         
-        # Store in database
+        file = request.files['file']
+        session_id = get_or_create_session_id()
+        
+        # Save file
+        filepath, original_filename, file_id = save_uploaded_file(file)
+        
+        # Read dataset to get info
+        try:
+            df = read_dataset_file(filepath)
+        except Exception as e:
+            os.remove(filepath)
+            return create_response({'error': f'Error reading file: {str(e)}'}, 400)
+        
+        # Save dataset info to database
         dataset = Dataset(
-            id=dataset_id,
+            id=file_id,
             filename=filepath,
-            original_filename=filename,
+            original_filename=original_filename,
             file_size=os.path.getsize(filepath),
-            processed=False
+            upload_time=datetime.utcnow()
         )
         db.session.add(dataset)
         db.session.commit()
         
         # Track upload
-        session_id = get_or_create_session()
         analytics.track_dataset_action(
             session_id=session_id,
-            dataset_id=dataset_id,
+            dataset_id=file_id,
             action='upload',
             rows=len(df),
-            columns=len(df.columns)
+            columns=len(df.columns),
+            file_size=os.path.getsize(filepath)
         )
         
-        # Return info
-        info = {
-            'dataset_id': dataset_id,
-            'filename': filename,
-            'rows': len(df),
-            'columns': len(df.columns),
-            'columns_list': list(df.columns),
-            'dtypes': df.dtypes.astype(str).to_dict(),
-            'missing_values': df.isnull().sum().to_dict()
-        }
-        
-        return jsonify(info)
-        
-    except Exception as e:
-        return jsonify({'error': f'Error reading file: {str(e)}'}), 500
-
-@app.route('/dataset/<dataset_id>/info', methods=['GET'])
-def get_dataset_info(dataset_id):
-    """Get information about uploaded dataset"""
-    dataset = Dataset.query.get(dataset_id)
-    if not dataset or not os.path.exists(dataset.filename):
-        return jsonify({'error': 'Dataset not found'}), 404
-    
-    try:
-        if dataset.filename.endswith('.csv'):
-            df = pd.read_csv(dataset.filename)
-        else:
-            df = pd.read_excel(dataset.filename)
-        
+        # Get column info
         preprocessor = DataPreprocessor(df)
         column_info = preprocessor.get_column_info()
         
-        return jsonify({
-            'dataset_id': dataset_id,
-            'shape': df.shape,
-            'columns': list(df.columns),
+        return create_response({
+            'success': True,
+            'dataset_id': file_id,
+            'filename': original_filename,
+            'rows': len(df),
+            'columns': len(df.columns),
             'column_info': column_info,
-            'missing_summary': {
-                'total_missing': int(df.isnull().sum().sum()),
-                'columns_with_missing': df.isnull().sum().to_dict()
-            }
-        })
+            'preview': df.head(10).to_dict('records'),
+            'message': 'Dataset uploaded successfully'
+        }, session_id=session_id)
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return create_response({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc() if app.debug else None
+        }, 500)
 
-@app.route('/dataset/<dataset_id>/preprocess', methods=['POST'])
-def preprocess_dataset(dataset_id):
-    """Apply preprocessing steps"""
-    data = request.json
-    steps = data.get('steps', [])
-    
-    # Track preprocessing start
-    session_id = get_or_create_session()
-    analytics.track_page_view(session_id, 'preprocessing', 'start')
-    
-    # Start background job
-    job_id = str(uuid.uuid4())
-    processing_jobs[job_id] = {
-        'status': 'processing',
-        'progress': 0,
-        'result': None,
-        'start_time': time.time()
-    }
-    
-    thread = threading.Thread(
-        target=process_dataset_background,
-        args=(dataset_id, steps, job_id, session_id)
-    )
-    thread.start()
-    
-    return jsonify({
-        'job_id': job_id,
-        'message': 'Processing started',
-        'status_url': f'/job/{job_id}/status'
-    })
-
-def process_dataset_background(dataset_id, steps, job_id, session_id):
-    """Background processing"""
+@app.route('/dataset/<dataset_id>/info', methods=['GET'])
+def get_dataset_info(dataset_id):
+    """Get information about a dataset"""
     try:
         dataset = Dataset.query.get(dataset_id)
         if not dataset:
-            raise Exception("Dataset not found")
+            return create_response({'error': 'Dataset not found'}, 404)
         
-        # Load data
-        if dataset.filename.endswith('.csv'):
-            df = pd.read_csv(dataset.filename)
-        else:
-            df = pd.read_excel(dataset.filename)
+        # Read dataset
+        df = read_dataset_file(dataset.filename)
         
+        # Get detailed info
         preprocessor = DataPreprocessor(df)
+        column_info = preprocessor.get_column_info()
+        
+        # Track view
+        session_id = get_or_create_session_id()
+        track_request('view', 'dataset_info', {'dataset_id': dataset_id})
+        
+        return create_response({
+            'success': True,
+            'dataset_id': dataset_id,
+            'filename': dataset.original_filename,
+            'upload_time': dataset.upload_time.isoformat() if dataset.upload_time else None,
+            'file_size': dataset.file_size,
+            'rows': len(df),
+            'columns': len(df.columns),
+            'column_info': column_info,
+            'missing_values': int(df.isnull().sum().sum()),
+            'duplicates': int(df.duplicated().sum()),
+            'preview': df.head(5).to_dict('records'),
+            'summary': {
+                'numeric_columns': len(df.select_dtypes(include=[np.number]).columns),
+                'categorical_columns': len(df.select_dtypes(include=['object']).columns),
+                'date_columns': len(df.select_dtypes(include=['datetime']).columns)
+            }
+        })
+        
+    except Exception as e:
+        return create_response({'error': str(e)}, 500)
+
+@app.route('/dataset/<dataset_id>/preprocess', methods=['POST'])
+def preprocess_dataset(dataset_id):
+    """Start preprocessing a dataset"""
+    try:
+        dataset = Dataset.query.get(dataset_id)
+        if not dataset:
+            return create_response({'error': 'Dataset not found'}, 404)
+        
+        # Get preprocessing steps from request
+        data = request.json or {}
+        steps = data.get('steps', [])
+        
+        # Create job
+        job_id = str(uuid.uuid4())
+        processing_jobs[job_id] = {
+            'id': job_id,
+            'dataset_id': dataset_id,
+            'status': 'processing',
+            'progress': 0,
+            'result': None,
+            'error': None,
+            'start_time': time.time(),
+            'created_at': datetime.utcnow()
+        }
+        
+        # Save job to database
+        job = ProcessingJob(
+            id=job_id,
+            dataset_id=dataset_id,
+            status='processing'
+        )
+        db.session.add(job)
+        db.session.commit()
+        
+        # Start processing in background thread
+        thread = threading.Thread(
+            target=_process_dataset_background,
+            args=(job_id, dataset_id, steps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Track preprocessing start
+        session_id = get_or_create_session_id()
+        track_request('start', 'preprocessing', {
+            'dataset_id': dataset_id,
+            'steps_count': len(steps)
+        })
+        
+        return create_response({
+            'success': True,
+            'job_id': job_id,
+            'message': 'Preprocessing started',
+            'status_url': f'/job/{job_id}/status'
+        })
+        
+    except Exception as e:
+        return create_response({'error': str(e)}, 500)
+
+def _process_dataset_background(job_id, dataset_id, steps):
+    """Background processing function"""
+    try:
+        # Update progress
         processing_jobs[job_id]['progress'] = 10
         
-        # Apply steps
-        preprocessor.drop_high_missing_columns(threshold=0.5)
+        # Load dataset
+        dataset = Dataset.query.get(dataset_id)
+        df = read_dataset_file(dataset.filename)
+        
+        # Apply preprocessing
+        preprocessor = DataPreprocessor(df)
         processing_jobs[job_id]['progress'] = 30
         
-        preprocessor.remove_duplicates()
-        processing_jobs[job_id]['progress'] = 50
+        # Apply user steps
+        if steps:
+            preprocessor.apply_preprocessing_steps(steps)
         
-        for i, step in enumerate(steps):
-            action = step.get('action')
-            column = step.get('column')
-            method = step.get('method')
-            
-            if action == 'change_type':
-                preprocessor.change_data_type(column, method)
-            elif action == 'fill_missing':
-                preprocessor.handle_missing_values(column, method)
-            elif action == 'encode':
-                preprocessor.encode_categorical(column, method)
-            elif action == 'remove_outliers':
-                preprocessor.remove_outliers(column)
-            
-            progress = 50 + (i / len(steps)) * 40
-            processing_jobs[job_id]['progress'] = int(progress)
+        processing_jobs[job_id]['progress'] = 70
         
-        # Save processed data
+        # Save processed dataset
         processed_filename = f"processed_{dataset_id}.csv"
-        processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_filename)
+        processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
         preprocessor.df.to_csv(processed_path, index=False)
         
         # Generate report
         report = preprocessor.generate_report()
         
+        # Update job status
         processing_jobs[job_id]['progress'] = 100
         processing_jobs[job_id]['status'] = 'completed'
         processing_jobs[job_id]['result'] = {
             'processed_file': processed_filename,
             'report': report,
-            'download_url': f'/download/{processed_filename}'
+            'download_url': f'/download/{processed_filename}',
+            'processed_shape': preprocessor.df.shape
         }
+        processing_jobs[job_id]['completed_at'] = datetime.utcnow()
+        
+        # Update database job
+        job = ProcessingJob.query.get(job_id)
+        if job:
+            job.status = 'completed'
+            job.progress = 100
+            job.results = json.dumps(processing_jobs[job_id]['result'])
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
         
         # Track completion
         processing_time = time.time() - processing_jobs[job_id]['start_time']
+        session_id = get_or_create_session_id()
         analytics.track_dataset_action(
             session_id=session_id,
             dataset_id=dataset_id,
@@ -269,234 +352,284 @@ def process_dataset_background(dataset_id, steps, job_id, session_id):
         )
         
     except Exception as e:
-        processing_jobs[job_id]['status'] = 'error'
+        # Handle error
+        processing_jobs[job_id]['status'] = 'failed'
         processing_jobs[job_id]['error'] = str(e)
+        processing_jobs[job_id]['completed_at'] = datetime.utcnow()
+        
+        # Update database job
+        job = ProcessingJob.query.get(job_id)
+        if job:
+            job.status = 'failed'
+            job.results = json.dumps({'error': str(e)})
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
 
 @app.route('/job/<job_id>/status', methods=['GET'])
 def get_job_status(job_id):
     """Get status of a processing job"""
     if job_id not in processing_jobs:
-        return jsonify({'error': 'Job not found'}), 404
+        job = ProcessingJob.query.get(job_id)
+        if not job:
+            return create_response({'error': 'Job not found'}, 404)
+        
+        # Try to reconstruct from database
+        job_data = {
+            'id': job.id,
+            'dataset_id': job.dataset_id,
+            'status': job.status,
+            'progress': job.progress,
+            'created_at': job.created_at.isoformat() if job.created_at else None,
+            'completed_at': job.completed_at.isoformat() if job.completed_at else None
+        }
+        
+        if job.results:
+            try:
+                job_data['result'] = json.loads(job.results)
+            except:
+                job_data['result'] = job.results
+        
+        return create_response(job_data)
     
-    job_info = processing_jobs[job_id]
-    return jsonify({
-        'job_id': job_id,
-        'status': job_info['status'],
-        'progress': job_info.get('progress', 0),
-        'result': job_info.get('result'),
-        'error': job_info.get('error')
-    })
+    job_data = processing_jobs[job_id].copy()
+    
+    # Convert datetime objects to strings for JSON serialization
+    if 'created_at' in job_data and isinstance(job_data['created_at'], datetime):
+        job_data['created_at'] = job_data['created_at'].isoformat()
+    if 'completed_at' in job_data and isinstance(job_data['completed_at'], datetime):
+        job_data['completed_at'] = job_data['completed_at'].isoformat()
+    
+    return create_response(job_data)
 
 @app.route('/dataset/<dataset_id>/compare', methods=['POST'])
 def compare_models(dataset_id):
     """Compare models before and after preprocessing"""
-    data = request.json
-    processed_file = data.get('processed_file')
-    target_column = data.get('target_column')
-    
-    # Track comparison start
-    session_id = get_or_create_session()
-    analytics.track_page_view(session_id, 'model_comparison', 'start')
-    
     try:
-        # Load datasets
         dataset = Dataset.query.get(dataset_id)
         if not dataset:
-            return jsonify({'error': 'Dataset not found'}), 404
+            return create_response({'error': 'Dataset not found'}, 404)
         
-        original_df = pd.read_csv(dataset.filename) if dataset.filename.endswith('.csv') else pd.read_excel(dataset.filename)
+        data = request.json or {}
+        processed_file = data.get('processed_file')
+        target_column = data.get('target_column')
         
-        processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_file)
+        if not processed_file:
+            return create_response({'error': 'Processed file not specified'}, 400)
+        
+        # Load original dataset
+        original_df = read_dataset_file(dataset.filename)
+        
+        # Load processed dataset
+        processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_file)
         if not os.path.exists(processed_path):
-            return jsonify({'error': 'Processed file not found'}), 404
+            return create_response({'error': 'Processed file not found'}, 404)
         
         processed_df = pd.read_csv(processed_path)
         
-        # Run comparisons
+        # Compare models
         comparator = ModelComparator()
+        comparison_result = comparator.compare_datasets(
+            original_df, processed_df, target_column
+        )
         
-        # Original data
-        X_orig, y_orig, problem_type_orig, target_col = comparator.prepare_data(original_df, target_column)
-        original_results = comparator.evaluate_models(X_orig, y_orig, problem_type_orig)
+        if comparison_result['status'] == 'error':
+            return create_response({'error': comparison_result.get('error', 'Comparison failed')}, 500)
         
-        # Processed data
-        X_proc, y_proc, problem_type_proc, _ = comparator.prepare_data(processed_df, target_col)
-        processed_results = comparator.evaluate_models(X_proc, y_proc, problem_type_proc)
-        
-        # Combine results
-        comparison = []
-        for i in range(min(len(original_results), len(processed_results))):
-            orig = original_results[i]
-            proc = processed_results[i]
-            
-            if isinstance(orig['score'], (int, float)) and isinstance(proc['score'], (int, float)):
-                improvement = round(float(proc['score']) - float(orig['score']), 4)
-            else:
-                improvement = 'N/A'
-            
-            comparison.append({
-                'model': orig['model'],
-                'original': orig['score'],
-                'processed': proc['score'],
-                'improvement': improvement,
-                'metric': orig['metric']
-            })
-        
-        # Track completion
+        # Track comparison
+        session_id = get_or_create_session_id()
         analytics.track_dataset_action(
             session_id=session_id,
             dataset_id=dataset_id,
-            action='compare'
+            action='compare',
+            processing_time=1.0,  # Estimate
+            rows=len(original_df),
+            columns=len(original_df.columns)
         )
         
-        return jsonify({
-            'comparison': comparison,
-            'problem_type': problem_type_orig,
-            'target_column': target_col
+        return create_response({
+            'success': True,
+            'comparison': comparison_result['comparison'],
+            'problem_type': comparison_result['problem_type'],
+            'target_column': comparison_result['target_column'],
+            'original_shape': comparison_result['original_data_shape'],
+            'processed_shape': comparison_result['processed_data_shape']
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return create_response({'error': str(e)}, 500)
 
 @app.route('/download/<filename>', methods=['GET'])
 def download_file(filename):
-    """Download processed dataset"""
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-    
-    # Track download
-    session_id = get_or_create_session()
-    # Extract dataset_id from filename
-    if filename.startswith('processed_'):
-        dataset_id = filename.replace('processed_', '').replace('.csv', '')
-        analytics.track_dataset_action(
-            session_id=session_id,
-            dataset_id=dataset_id,
-            action='download'
-        )
-    
-    return send_file(filepath, as_attachment=True)
+    """Download a file"""
+    try:
+        # Check in processed folder first
+        filepath = os.path.join(app.config['PROCESSED_FOLDER'], filename)
+        if not os.path.exists(filepath):
+            # Check in uploads folder
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if not os.path.exists(filepath):
+                return create_response({'error': 'File not found'}, 404)
+        
+        # Track download
+        session_id = get_or_create_session_id()
+        track_request('download', 'file_download', {'filename': filename})
+        
+        # Extract dataset ID from filename for tracking
+        if filename.startswith('processed_'):
+            dataset_id = filename.replace('processed_', '').replace('.csv', '')
+            analytics.track_dataset_action(
+                session_id=session_id,
+                dataset_id=dataset_id,
+                action='download'
+            )
+        
+        return send_file(filepath, as_attachment=True)
+        
+    except Exception as e:
+        return create_response({'error': str(e)}, 500)
 
-# ANALYTICS ENDPOINTS
+# ==================== ANALYTICS ENDPOINTS ====================
+
 @app.route('/api/analytics/dashboard', methods=['GET'])
 def get_analytics_dashboard():
-    """Get analytics dashboard data"""
-    # Simple authentication (in production, use proper auth)
-    auth_token = request.headers.get('X-Admin-Token')
-    if not auth_token or auth_token != 'admin123':  # Change this in production
-        return jsonify({'error': 'Unauthorized'}), 401
-    
+    """Get analytics dashboard data (requires admin token)"""
     try:
-        stats = analytics.get_dashboard_stats(days=30)
-        user_flow = analytics.get_user_flow()
+        # Simple authentication (in production, use proper auth)
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
+            return create_response({'error': 'Unauthorized'}, 401)
         
-        return jsonify({
+        # Get stats
+        stats = analytics.get_dashboard_stats(days=30)
+        
+        # Get recent jobs from database
+        recent_jobs = ProcessingJob.query.order_by(
+            ProcessingJob.created_at.desc()
+        ).limit(10).all()
+        
+        jobs_data = []
+        for job in recent_jobs:
+            jobs_data.append({
+                'id': job.id[:8],
+                'dataset_id': job.dataset_id[:8] if job.dataset_id else None,
+                'status': job.status,
+                'progress': job.progress,
+                'created_at': job.created_at.isoformat() if job.created_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None
+            })
+        
+        return create_response({
             'success': True,
             'stats': stats,
-            'user_flow': user_flow,
+            'recent_jobs': jobs_data,
+            'total_datasets_db': Dataset.query.count(),
+            'total_jobs_db': ProcessingJob.query.count(),
             'generated_at': datetime.utcnow().isoformat()
         })
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/analytics/realtime', methods=['GET'])
-def get_realtime_analytics():
-    """Get real-time analytics"""
-    # Last 5 minutes
-    five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-    
-    recent_views = analytics.PageView.query.filter(
-        analytics.PageView.timestamp >= five_minutes_ago
-    ).count()
-    
-    active_sessions = analytics.UserSession.query.filter(
-        analytics.UserSession.last_activity >= five_minutes_ago
-    ).count()
-    
-    return jsonify({
-        'last_5_minutes': {
-            'page_views': recent_views,
-            'active_sessions': active_sessions
-        },
-        'current_time': datetime.utcnow().isoformat()
-    })
+        return create_response({'error': str(e)}, 500)
 
 @app.route('/api/analytics/export', methods=['GET'])
-def export_analytics_data():
-    """Export analytics data as CSV"""
-    auth_token = request.headers.get('X-Admin-Token')
-    if not auth_token or auth_token != 'admin123':  # Change this in production
-        return jsonify({'error': 'Unauthorized'}), 401
-    
+def export_analytics():
+    """Export analytics data as CSV (requires admin token)"""
     try:
-        csv_data = analytics.export_analytics(format='csv')
+        # Simple authentication
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
+            return create_response({'error': 'Unauthorized'}, 401)
         
-        # Create response
-        response = app.response_class(
-            response=csv_data,
-            mimetype='text/csv',
-            headers={'Content-Disposition': f'attachment;filename=analytics_export_{datetime.utcnow().strftime("%Y%m%d")}.csv'}
-        )
+        # Get format parameter
+        format_type = request.args.get('format', 'csv')
         
-        return response
+        # Export data
+        exported_data = analytics.export_analytics(format=format_type)
+        
+        if not exported_data:
+            return create_response({'error': 'No data to export'}, 404)
+        
+        if format_type == 'csv':
+            response = make_response(exported_data)
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = \
+                f'attachment; filename=analytics_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+            return response
+        
+        elif format_type == 'json':
+            return create_response(json.loads(exported_data))
+        
+        else:
+            return create_response({'data': exported_data})
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return create_response({'error': str(e)}, 500)
 
 @app.route('/api/analytics/cleanup', methods=['POST'])
 def cleanup_analytics():
-    """Clean up old analytics data"""
-    auth_token = request.headers.get('X-Admin-Token')
-    if not auth_token or auth_token != 'admin123':  # Change this in production
-        return jsonify({'error': 'Unauthorized'}), 401
-    
+    """Clean up old analytics data (requires admin token)"""
     try:
-        days = request.json.get('days', 90)
+        # Simple authentication
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
+            return create_response({'error': 'Unauthorized'}, 401)
+        
+        data = request.json or {}
+        days = data.get('days', 90)
+        
         success = analytics.cleanup_old_data(days=days)
         
         if success:
-            return jsonify({
+            return create_response({
                 'success': True,
                 'message': f'Cleaned up data older than {days} days'
             })
         else:
-            return jsonify({'error': 'Cleanup failed'}), 500
+            return create_response({'error': 'Cleanup failed'}, 500)
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return create_response({'error': str(e)}, 500)
 
-with app.app_context():
-    # This will create all tables including analytics tables
-    from analytics import AnalyticsTracker
-    db.create_all()
-    print("All tables created successfully")
-
-
-# Add this test route to app.py
-@app.route('/test-analytics')
-def test_analytics():
-    session_id = str(uuid.uuid4())
-    analytics.track_page_view(session_id, 'test_page', 'test_action')
-    analytics.track_dataset_action(session_id, 'test_dataset', 'upload', rows=100, columns=10)
-    return jsonify({'message': 'Test tracking completed'})
-
-
-# Track endpoint for frontend
 @app.route('/api/track', methods=['POST'])
 def track_event():
-    """Track events from frontend"""
+    """Track custom events from frontend"""
     try:
-        data = request.json
-        session_id = data.get('session_id')
+        data = request.json or {}
+        session_id = data.get('session_id', get_or_create_session_id())
         page = data.get('page', 'unknown')
         action = data.get('action')
+        details = data.get('details', {})
         
-        if session_id:
-            analytics.track_page_view(session_id, page, action)
+        success = analytics.track_page_view(session_id, page, action, details)
         
-        return jsonify({'success': True})
-    except:
-        return jsonify({'success': False}), 400
+        response_data = {'success': success, 'session_id': session_id}
+        
+        # Set session cookie if new session
+        response = jsonify(response_data)
+        if not request.cookies.get('session_id'):
+            response.set_cookie('session_id', session_id, max_age=30*24*60*60)
+        
+        return response, 200
+        
+    except Exception as e:
+        return create_response({'success': False, 'error': str(e)}, 400)
+
+# ==================== ERROR HANDLERS ====================
+
+@app.errorhandler(404)
+def not_found(error):
+    return create_response({'error': 'Not found'}, 404)
+
+@app.errorhandler(500)
+def internal_error(error):
+    return create_response({'error': 'Internal server error'}, 500)
+
+@app.errorhandler(413)
+def too_large(error):
+    return create_response({'error': 'File too large (max 100MB)'}, 413)
+
+# ==================== MAIN EXECUTION ====================
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    app.run(host='0.0.0.0', port=port, debug=debug)

@@ -1,227 +1,362 @@
-// Admin Analytics Dashboard
-let adminToken = 'admin123'; // Change this in production
+// ==================== CONFIGURATION ====================
+const ADMIN_CONFIG = {
+    BACKEND_URL: window.location.hostname === 'localhost' 
+        ? 'http://localhost:5000' 
+        : 'https://your-backend-service.onrender.com', // CHANGE THIS FOR DEPLOYMENT
+    ADMIN_TOKEN: localStorage.getItem('admin_token') || 'admin123',
+    REFRESH_INTERVAL: 30000, // 30 seconds
+    CHARTS: {}
+};
 
-// DOM Elements
-const authSection = document.getElementById('authSection');
-const dashboardContent = document.getElementById('dashboardContent');
-
-// Initialize
+// ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {
-    // For simplicity, auto-authenticate with default token
-    // In production, you should implement proper authentication
-    authenticateAdmin();
+    // Check if already authenticated
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken) {
+        ADMIN_CONFIG.ADMIN_TOKEN = savedToken;
+        authenticateAdmin();
+    }
+    
+    // Setup event listeners
+    setupAdminEventListeners();
 });
 
-// Authenticate Admin
+function setupAdminEventListeners() {
+    // Enter key for auth
+    document.getElementById('adminToken')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') authenticateAdmin();
+    });
+}
+
+// ==================== AUTHENTICATION ====================
 async function authenticateAdmin() {
+    const tokenInput = document.getElementById('adminToken');
+    const token = tokenInput ? tokenInput.value.trim() : ADMIN_CONFIG.ADMIN_TOKEN;
+    
+    if (!token) {
+        showNotification('Please enter admin token', 'error');
+        return;
+    }
+    
+    showLoading('Authenticating...');
+    
     try {
-        const response = await fetch('/api/analytics/dashboard', {
+        const response = await fetch(`${ADMIN_CONFIG.BACKEND_URL}/api/analytics/dashboard`, {
             headers: {
-                'X-Admin-Token': adminToken
+                'X-Admin-Token': token
             }
         });
         
         if (response.ok) {
-            authSection.classList.add('hidden');
-            dashboardContent.classList.remove('hidden');
+            // Save token
+            ADMIN_CONFIG.ADMIN_TOKEN = token;
+            localStorage.setItem('admin_token', token);
+            
+            // Show dashboard
+            document.getElementById('authScreen').classList.add('hidden');
+            document.getElementById('dashboardContent').classList.remove('hidden');
+            
+            // Load data
             loadDashboardData();
-            startRealtimeUpdates();
+            startAutoRefresh();
+            
+            showNotification('Authentication successful!', 'success');
         } else {
-            showNotification('Authentication failed. Please check token.', 'error');
+            throw new Error('Invalid admin token');
         }
     } catch (error) {
-        showNotification('Network error. Please check backend.', 'error');
+        showNotification(error.message, 'error');
+        localStorage.removeItem('admin_token');
+    } finally {
+        hideLoading();
     }
 }
 
-// Load Dashboard Data
+function logoutAdmin() {
+    if (confirm('Are you sure you want to logout?')) {
+        localStorage.removeItem('admin_token');
+        location.reload();
+    }
+}
+
+// ==================== DASHBOARD DATA ====================
 async function loadDashboardData() {
     try {
-        const response = await fetch('/api/analytics/dashboard', {
+        const response = await fetch(`${ADMIN_CONFIG.BACKEND_URL}/api/analytics/dashboard`, {
             headers: {
-                'X-Admin-Token': adminToken
+                'X-Admin-Token': ADMIN_CONFIG.ADMIN_TOKEN
             }
         });
         
         if (response.ok) {
             const data = await response.json();
-            updateDashboard(data);
+            updateDashboardUI(data);
+        } else if (response.status === 401) {
+            // Token expired
+            localStorage.removeItem('admin_token');
+            location.reload();
         } else {
-            showNotification('Failed to load dashboard data', 'error');
+            throw new Error('Failed to load dashboard data');
         }
     } catch (error) {
-        showNotification('Network error', 'error');
+        showNotification(error.message, 'error');
+        console.error('Dashboard error:', error);
     }
 }
 
-// Update Dashboard UI
-function updateDashboard(data) {
-    if (!data.success) return;
+function updateDashboardUI(data) {
+    if (!data.success || !data.stats) {
+        showNotification('Invalid dashboard data', 'error');
+        return;
+    }
     
     const stats = data.stats;
     
-    // Overview stats
-    document.getElementById('totalSessions').textContent = 
-        stats.total_sessions.toLocaleString();
-    document.getElementById('totalPageViews').textContent = 
-        stats.total_page_views.toLocaleString();
-    document.getElementById('totalDatasets').textContent = 
-        stats.total_datasets.toLocaleString();
-    document.getElementById('totalProcessing').textContent = 
-        stats.total_preprocessing.toLocaleString();
+    // Update overview stats
+    document.getElementById('totalSessions').textContent = stats.total_sessions?.toLocaleString() || '0';
+    document.getElementById('totalPageViews').textContent = stats.total_page_views?.toLocaleString() || '0';
+    document.getElementById('totalDatasets').textContent = stats.total_datasets?.toLocaleString() || '0';
+    document.getElementById('totalPreprocessing').textContent = stats.total_preprocessing?.toLocaleString() || '0';
     
-    // Today's stats
-    document.getElementById('todaySessions').textContent = 
-        stats.today_sessions.toLocaleString();
-    document.getElementById('todayPageViews').textContent = 
-        stats.today_page_views.toLocaleString();
+    // Update today's stats
+    document.getElementById('todaySessions').textContent = stats.today_sessions?.toLocaleString() || '0';
+    document.getElementById('todayPageViews').textContent = stats.today_page_views?.toLocaleString() || '0';
+    document.getElementById('activeSessions').textContent = stats.active_sessions_5min?.toLocaleString() || '0';
     
-    // Active sessions
-    document.getElementById('activeSessions').textContent = 
-        stats.active_sessions.toLocaleString();
+    // Update processing stats
+    const avgTime = stats.processing_stats?.avg_processing_time || 0;
+    document.getElementById('avgProcessingTime').textContent = `${avgTime.toFixed(2)}s`;
     
-    // Dataset analytics
-    document.getElementById('avgProcessingTime').textContent = 
-        `${stats.processing_stats.avg_processing_time.toFixed(2)}s`;
-    document.getElementById('avgDatasetSize').textContent = 
-        `${Math.round(stats.processing_stats.avg_rows)} rows × ${Math.round(stats.processing_stats.avg_columns)} columns`;
-    document.getElementById('totalDownloads').textContent = 
-        stats.total_downloads.toLocaleString();
-    document.getElementById('totalComparisons').textContent = 
-        stats.total_comparisons.toLocaleString();
+    // Update dataset stats
+    document.getElementById('totalUploads').textContent = stats.total_datasets?.toLocaleString() || '0';
+    document.getElementById('totalDownloads').textContent = stats.total_downloads?.toLocaleString() || '0';
+    document.getElementById('totalComparisons').textContent = stats.total_comparisons?.toLocaleString() || '0';
+    document.getElementById('avgColumns').textContent = stats.processing_stats?.avg_columns?.toFixed(1) || '0';
     
-    // Popular pages table
-    const popularPagesTbody = document.getElementById('popularPages');
-    popularPagesTbody.innerHTML = stats.popular_pages.map(page => `
-        <tr>
-            <td>${page.page}</td>
-            <td>${page.views.toLocaleString()}</td>
-            <td>${formatTimeAgo(new Date())}</td>
-        </tr>
-    `).join('');
+    // Update charts
+    updateCharts(stats);
     
-    // Recent activity feed
-    const activityFeed = document.getElementById('activityFeed');
-    activityFeed.innerHTML = stats.recent_activity.map(activity => `
-        <div class="activity-item">
-            <div class="activity-icon">
-                <i class="fas fa-${getActivityIcon(activity.action)}"></i>
-            </div>
-            <div class="activity-details">
-                <div class="activity-title">
-                    ${activity.page} ${activity.action ? `- ${activity.action}` : ''}
-                </div>
-                <div class="activity-meta">
-                    <span class="activity-time">${formatTimeAgo(new Date(activity.time))}</span>
-                    <span class="activity-session">Session: ${activity.session_id}</span>
-                </div>
-            </div>
-        </div>
-    `).join('');
+    // Update recent activity
+    updateRecentActivity(stats.recent_activity || []);
     
-    // Update charts if they exist
-    if (window.dashboardCharts) {
-        updateCharts(data);
-    } else {
-        createCharts(data);
-    }
+    // Update popular pages
+    updatePopularPages(stats.popular_pages || []);
+    
+    // Update last refresh time
+    updateLastRefresh();
 }
 
-// Create Charts
-function createCharts(data) {
-    window.dashboardCharts = {};
-    
+function updateCharts(stats) {
     // Daily Activity Chart
-    const dailyCtx = document.getElementById('dailyActivityChart');
-    if (dailyCtx) {
-        const dailyLabels = data.stats.daily_activity.map(item => 
-            new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        );
-        const dailyData = data.stats.daily_activity.map(item => item.count);
-        
-        window.dashboardCharts.daily = new Chart(dailyCtx, {
-            type: 'line',
-            data: {
-                labels: dailyLabels,
-                datasets: [{
-                    label: 'Page Views',
-                    data: dailyData,
-                    borderColor: '#4a6fa5',
-                    backgroundColor: 'rgba(74, 111, 165, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                }
-            }
-        });
+    updateDailyActivityChart(stats.daily_activity || []);
+    
+    // Dataset Processing Chart
+    updateDatasetChart(stats);
+}
+
+function updateDailyActivityChart(dailyData) {
+    const ctx = document.getElementById('dailyActivityChart');
+    if (!ctx) return;
+    
+    // Prepare data
+    const labels = dailyData.map(item => {
+        const date = new Date(item.date);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }).reverse();
+    
+    const data = dailyData.map(item => item.count).reverse();
+    
+    // Destroy existing chart
+    if (ADMIN_CONFIG.CHARTS.dailyActivity) {
+        ADMIN_CONFIG.CHARTS.dailyActivity.destroy();
     }
     
-    // User Flow Chart
-    const flowCtx = document.getElementById('userFlowChart');
-    if (flowCtx && data.user_flow) {
-        const flowLabels = data.user_flow.map(item => item.transition);
-        const flowData = data.user_flow.map(item => item.count);
-        
-        window.dashboardCharts.flow = new Chart(flowCtx, {
-            type: 'bar',
-            data: {
-                labels: flowLabels,
-                datasets: [{
-                    label: 'Transitions',
-                    data: flowData,
-                    backgroundColor: '#4a6fa5'
-                }]
+    // Create new chart
+    ADMIN_CONFIG.CHARTS.dailyActivity = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Page Views',
+                data: data,
+                borderColor: '#4a6fa5',
+                backgroundColor: 'rgba(74, 111, 165, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                pointBackgroundColor: '#4a6fa5',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
+                }
             },
-            options: {
-                indexAxis: 'y',
-                responsive: true,
-                plugins: {
-                    legend: {
+            scales: {
+                x: {
+                    grid: {
                         display: false
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        precision: 0
                     }
                 }
             }
-        });
-    }
+        }
+    });
 }
 
-// Update Charts
-function updateCharts(data) {
-    // Update daily activity chart
-    if (window.dashboardCharts.daily) {
-        const dailyLabels = data.stats.daily_activity.map(item => 
-            new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        );
-        const dailyData = data.stats.daily_activity.map(item => item.count);
+function updateDatasetChart(stats) {
+    const ctx = document.getElementById('datasetChart');
+    if (!ctx) return;
+    
+    const data = [
+        stats.total_datasets || 0,
+        stats.total_preprocessing || 0,
+        stats.total_comparisons || 0,
+        stats.total_downloads || 0
+    ];
+    
+    // Destroy existing chart
+    if (ADMIN_CONFIG.CHARTS.datasetChart) {
+        ADMIN_CONFIG.CHARTS.datasetChart.destroy();
+    }
+    
+    // Create new chart
+    ADMIN_CONFIG.CHARTS.datasetChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Uploads', 'Preprocessing', 'Comparisons', 'Downloads'],
+            datasets: [{
+                data: data,
+                backgroundColor: [
+                    '#4a6fa5',
+                    '#28a745',
+                    '#ffc107',
+                    '#17a2b8'
+                ],
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                }
+            },
+            cutout: '60%'
+        }
+    });
+}
+
+function updateRecentActivity(activities) {
+    const container = document.getElementById('activityList');
+    if (!container) return;
+    
+    if (activities.length === 0) {
+        container.innerHTML = '<div class="activity-item"><div class="activity-content"><div class="activity-title">No recent activity</div></div></div>';
+        return;
+    }
+    
+    let html = '';
+    activities.forEach(activity => {
+        const icon = getActivityIcon(activity.type, activity.action);
+        const title = getActivityTitle(activity);
+        const time = formatTimeAgo(activity.timestamp);
         
-        window.dashboardCharts.daily.data.labels = dailyLabels;
-        window.dashboardCharts.daily.data.datasets[0].data = dailyData;
-        window.dashboardCharts.daily.update();
+        html += `
+            <div class="activity-item">
+                <div class="activity-icon">
+                    <i class="${icon}"></i>
+                </div>
+                <div class="activity-content">
+                    <div class="activity-title">${title}</div>
+                    <div class="activity-meta">
+                        <span class="activity-time">${time}</span>
+                        ${activity.session_id ? `<span class="activity-session">Session: ${activity.session_id}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function updatePopularPages(pages) {
+    const tbody = document.querySelector('#popularPagesTable tbody');
+    if (!tbody) return;
+    
+    if (pages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3">No data available</td></tr>';
+        return;
     }
+    
+    let html = '';
+    pages.forEach(page => {
+        html += `
+            <tr>
+                <td>${escapeHtml(page.page)}</td>
+                <td>${page.views.toLocaleString()}</td>
+                <td>${formatTimeAgo(new Date())}</td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
 }
 
-// Helper Functions
-function getActivityIcon(action) {
-    const icons = {
-        'upload': 'cloud-upload-alt',
-        'preprocess': 'cogs',
-        'compare': 'robot',
-        'download': 'download',
-        'start': 'play',
-        'view': 'eye'
-    };
-    return icons[action] || 'circle';
+// ==================== UTILITY FUNCTIONS ====================
+function getActivityIcon(type, action) {
+    if (type === 'page_view') {
+        switch (action) {
+            case 'upload': return 'fas fa-cloud-upload-alt';
+            case 'preprocess': return 'fas fa-cogs';
+            case 'compare': return 'fas fa-robot';
+            case 'download': return 'fas fa-download';
+            default: return 'fas fa-eye';
+        }
+    } else if (type === 'dataset_action') {
+        switch (action) {
+            case 'upload': return 'fas fa-file-upload';
+            case 'preprocess': return 'fas fa-magic';
+            case 'compare': return 'fas fa-chart-bar';
+            case 'download': return 'fas fa-file-download';
+            default: return 'fas fa-database';
+        }
+    }
+    return 'fas fa-circle';
 }
 
-function formatTimeAgo(date) {
+function getActivityTitle(activity) {
+    if (activity.type === 'page_view') {
+        return `Viewed ${activity.page}${activity.action ? ` - ${activity.action}` : ''}`;
+    } else if (activity.type === 'dataset_action') {
+        return `${activity.action.charAt(0).toUpperCase() + activity.action.slice(1)} dataset ${activity.dataset_id?.substring(0, 8) || ''}`;
+    }
+    return 'Unknown activity';
+}
+
+function formatTimeAgo(timestamp) {
+    if (!timestamp) return 'Just now';
+    
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
     const now = new Date();
     const diff = now - date;
     
@@ -231,38 +366,29 @@ function formatTimeAgo(date) {
     return date.toLocaleDateString();
 }
 
-// Start real-time updates
-function startRealtimeUpdates() {
-    // Update every 30 seconds
-    setInterval(async () => {
-        try {
-            const response = await fetch('/api/analytics/realtime');
-            if (response.ok) {
-                const data = await response.json();
-                updateRealtimeStats(data);
-            }
-        } catch (error) {
-            console.error('Failed to fetch real-time stats:', error);
-        }
-    }, 30000);
+function updateLastRefresh() {
+    // Could add a last refresh timestamp display
 }
 
-// Update real-time stats
-function updateRealtimeStats(data) {
-    if (data.last_5_minutes) {
-        document.getElementById('activeSessions').textContent = 
-            data.last_5_minutes.active_sessions;
-        document.getElementById('recentPageViews').textContent = 
-            data.last_5_minutes.page_views;
-    }
+function startAutoRefresh() {
+    // Auto-refresh dashboard every 30 seconds
+    setInterval(() => {
+        loadDashboardData();
+    }, ADMIN_CONFIG.REFRESH_INTERVAL);
 }
 
-// Export Analytics Data
-async function exportAnalytics() {
+function refreshDashboard() {
+    loadDashboardData();
+    showNotification('Dashboard refreshed', 'success');
+}
+
+async function exportAnalyticsData() {
+    showLoading('Exporting analytics data...');
+    
     try {
-        const response = await fetch('/api/analytics/export', {
+        const response = await fetch(`${ADMIN_CONFIG.BACKEND_URL}/api/analytics/export`, {
             headers: {
-                'X-Admin-Token': adminToken
+                'X-Admin-Token': ADMIN_CONFIG.ADMIN_TOKEN
             }
         });
         
@@ -277,67 +403,135 @@ async function exportAnalytics() {
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
             
-            showNotification('Analytics exported successfully!', 'success');
+            showNotification('Analytics data exported successfully!', 'success');
         } else {
-            showNotification('Failed to export analytics', 'error');
+            throw new Error('Export failed');
         }
     } catch (error) {
-        showNotification('Export failed', 'error');
+        showNotification(error.message, 'error');
+    } finally {
+        hideLoading();
     }
 }
 
-// Cleanup old data
-async function cleanupData() {
-    if (!confirm('Are you sure you want to delete analytics data older than 90 days?')) {
+async function cleanupAnalyticsData() {
+    if (!confirm('Are you sure you want to delete analytics data older than 90 days? This action cannot be undone.')) {
         return;
     }
     
+    showLoading('Cleaning up old data...');
+    
     try {
-        const response = await fetch('/api/analytics/cleanup', {
+        const response = await fetch(`${ADMIN_CONFIG.BACKEND_URL}/api/analytics/cleanup`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Admin-Token': adminToken
+                'X-Admin-Token': ADMIN_CONFIG.ADMIN_TOKEN
             },
             body: JSON.stringify({ days: 90 })
         });
         
         if (response.ok) {
             const data = await response.json();
-            showNotification(data.message || 'Cleanup completed', 'success');
+            showNotification(data.message || 'Cleanup completed successfully', 'success');
             loadDashboardData(); // Refresh
         } else {
-            showNotification('Cleanup failed', 'error');
+            throw new Error('Cleanup failed');
         }
     } catch (error) {
-        showNotification('Cleanup failed', 'error');
+        showNotification(error.message, 'error');
+    } finally {
+        hideLoading();
     }
 }
 
-// Refresh Dashboard
-function refreshDashboard() {
-    loadDashboardData();
-    showNotification('Dashboard refreshed', 'success');
+// ==================== SHARED FUNCTIONS ====================
+function showLoading(message = 'Loading...') {
+    // Reuse the same loading modal from main app
+    const modal = document.getElementById('loadingModal') || createLoadingModal();
+    modal.querySelector('#loadingMessage').textContent = message;
+    modal.classList.remove('hidden');
 }
 
-// Notification System
+function hideLoading() {
+    const modal = document.getElementById('loadingModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function createLoadingModal() {
+    const modal = document.createElement('div');
+    modal.id = 'loadingModal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="loader"></div>
+            <h3 id="loadingMessage">Loading...</h3>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
 function showNotification(message, type = 'info') {
+    // Reuse notification system from main app
+    const container = document.getElementById('notificationContainer') || createNotificationContainer();
+    
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
+    
+    const icons = {
+        success: 'fas fa-check-circle',
+        error: 'fas fa-exclamation-circle',
+        warning: 'fas fa-exclamation-triangle',
+        info: 'fas fa-info-circle'
+    };
+    
     notification.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
-        <span>${message}</span>
+        <div class="notification-icon">
+            <i class="${icons[type] || icons.info}"></i>
+        </div>
+        <div class="notification-content">
+            <div class="notification-title">${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+            <div class="notification-message">${escapeHtml(message)}</div>
+        </div>
     `;
     
-    document.body.appendChild(notification);
+    container.appendChild(notification);
     
+    // Auto-remove after 5 seconds
     setTimeout(() => {
-        notification.style.animation = 'slideInRight 0.3s ease reverse';
+        notification.style.opacity = '0';
+        notification.style.transform = 'translateX(100%)';
         setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    }, 5000);
 }
 
-// Add to admin.html button events
-window.exportAnalytics = exportAnalytics;
-window.cleanupData = cleanupData;
+function createNotificationContainer() {
+    const container = document.createElement('div');
+    container.id = 'notificationContainer';
+    container.style.cssText = `
+        position: fixed;
+        top: 24px;
+        right: 24px;
+        z-index: 1001;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-width: 400px;
+    `;
+    document.body.appendChild(container);
+    return container;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ==================== EXPORT FUNCTIONS FOR HTML ====================
+window.authenticateAdmin = authenticateAdmin;
+window.logoutAdmin = logoutAdmin;
 window.refreshDashboard = refreshDashboard;
+window.exportAnalyticsData = exportAnalyticsData;
+window.cleanupAnalyticsData = cleanupAnalyticsData;

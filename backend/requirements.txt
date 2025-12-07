@@ -5,9 +5,7 @@ pandas
 numpy
 scikit-learn
 joblib
-geoip2
-matplotlib
-seaborn
-plotly
 python-dotenv
-flask-limiter
+gunicorn
+openpyxl
+xlrd

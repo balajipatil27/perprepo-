@@ -8,7 +8,31 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .admin-stats-grid {
+        .admin-header {
+            background: linear-gradient(135deg, #4a6fa5 0%, #166088 100%);
+            color: white;
+            border-radius: var(--border-radius);
+            padding: 30px;
+            margin: 24px 0;
+            box-shadow: var(--box-shadow);
+        }
+        
+        .admin-header h1 {
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .admin-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
@@ -17,120 +41,248 @@
         
         .stat-card {
             background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: var(--border-radius);
+            padding: 25px;
+            box-shadow: var(--box-shadow-light);
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 20px;
+            transition: var(--transition);
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--box-shadow);
         }
         
         .stat-icon {
-            width: 50px;
-            height: 50px;
-            background: #4a6fa5;
-            border-radius: 10px;
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
             font-size: 24px;
+            color: white;
+            flex-shrink: 0;
         }
         
+        .stat-icon.primary { background: var(--primary-color); }
+        .stat-icon.success { background: var(--success-color); }
+        .stat-icon.warning { background: var(--warning-color); }
+        .stat-icon.info { background: var(--info-color); }
+        
         .stat-content h3 {
+            font-size: 28px;
             margin: 0;
-            font-size: 24px;
-            color: #333;
+            color: var(--dark-color);
         }
         
         .stat-content p {
             margin: 5px 0 0;
-            color: #666;
+            color: var(--gray-color);
             font-size: 14px;
         }
         
-        .chart-container {
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .charts-container {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .chart-wrapper {
             background: white;
-            padding: 20px;
-            border-radius: 10px;
+            border-radius: var(--border-radius);
+            padding: 25px;
+            box-shadow: var(--box-shadow-light);
+        }
+        
+        .chart-wrapper h3 {
             margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--gray-light);
+            color: var(--primary-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
-        .chart-container h3 {
-            margin-top: 0;
-            color: #333;
-            border-bottom: 2px solid #f0f0f0;
-            padding-bottom: 10px;
+        .chart-container {
+            height: 300px;
+            position: relative;
         }
         
-        .activity-feed {
+        .recent-activity {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 25px;
+            box-shadow: var(--box-shadow-light);
+            margin-bottom: 30px;
+        }
+        
+        .activity-list {
             max-height: 400px;
             overflow-y: auto;
+            margin-top: 20px;
         }
         
         .activity-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
             display: flex;
-            gap: 15px;
             align-items: center;
+            gap: 15px;
+            padding: 15px;
+            border-bottom: 1px solid var(--gray-light);
+            transition: var(--transition);
+        }
+        
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+        
+        .activity-item:hover {
+            background: var(--light-color);
         }
         
         .activity-icon {
             width: 40px;
             height: 40px;
-            background: #f5f5f5;
-            border-radius: 8px;
+            background: var(--light-color);
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #4a6fa5;
+            color: var(--primary-color);
+            flex-shrink: 0;
         }
         
-        .admin-actions {
+        .activity-content {
+            flex: 1;
+        }
+        
+        .activity-title {
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        
+        .activity-meta {
             display: flex;
-            gap: 10px;
-            margin: 20px 0;
+            gap: 15px;
+            font-size: 13px;
+            color: var(--gray-color);
         }
         
-        .hidden {
-            display: none !important;
+        .auth-container {
+            max-width: 400px;
+            margin: 100px auto;
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 40px;
+            box-shadow: var(--box-shadow);
+            text-align: center;
+        }
+        
+        .auth-container h2 {
+            color: var(--primary-color);
+            margin-bottom: 30px;
+        }
+        
+        .auth-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid var(--gray-light);
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 20px;
+            transition: var(--transition);
+        }
+        
+        .auth-input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            margin-top: 20px;
+        }
+        
+        .analytics-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .analytics-table th {
+            background: var(--primary-color);
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .analytics-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--gray-light);
+        }
+        
+        .analytics-table tr:hover {
+            background: var(--light-color);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1><i class="fas fa-chart-line"></i> Analytics Dashboard</h1>
-            <div class="admin-actions">
-                <button class="btn btn-primary" onclick="refreshDashboard()">
-                    <i class="fas fa-sync-alt"></i> Refresh
-                </button>
-                <button class="btn btn-success" onclick="exportAnalytics()">
-                    <i class="fas fa-download"></i> Export Data
-                </button>
-                <button class="btn btn-warning" onclick="cleanupData()">
-                    <i class="fas fa-trash"></i> Cleanup Old Data
-                </button>
-                <a href="index.html" class="btn btn-secondary">
-                    <i class="fas fa-arrow-left"></i> Back to App
-                </a>
-            </div>
-        </header>
-
-        <!-- Authentication Section -->
-        <div id="authSection" class="card">
-            <h2>Admin Access Required</h2>
-            <p>Loading analytics dashboard...</p>
+        <!-- Authentication Screen -->
+        <div id="authScreen" class="auth-container">
+            <h2><i class="fas fa-lock"></i> Admin Authentication</h2>
+            <p>Enter admin token to access analytics dashboard</p>
+            <input type="password" id="adminToken" class="auth-input" placeholder="Enter admin token">
+            <button class="btn btn-primary btn-large" onclick="authenticateAdmin()" style="width: 100%;">
+                <i class="fas fa-sign-in-alt"></i> Authenticate
+            </button>
+            <p style="margin-top: 20px; font-size: 14px; color: var(--gray-color);">
+                <i class="fas fa-info-circle"></i> Default token: admin123
+            </p>
         </div>
 
-        <!-- Dashboard Content -->
+        <!-- Dashboard Content (Hidden initially) -->
         <div id="dashboardContent" class="hidden">
+            <!-- Header -->
+            <div class="admin-header">
+                <h1><i class="fas fa-chart-line"></i> Analytics Dashboard</h1>
+                <p>Monitor usage, track performance, and analyze user behavior</p>
+                <div class="admin-actions">
+                    <button class="btn btn-light" onclick="refreshDashboard()">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                    <button class="btn btn-success" onclick="exportAnalyticsData()">
+                        <i class="fas fa-download"></i> Export Data
+                    </button>
+                    <button class="btn btn-warning" onclick="cleanupAnalyticsData()">
+                        <i class="fas fa-trash"></i> Cleanup Old Data
+                    </button>
+                    <button class="btn btn-danger" onclick="logoutAdmin()">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </button>
+                    <a href="index.html" class="btn btn-light">
+                        <i class="fas fa-arrow-left"></i> Back to App
+                    </a>
+                </div>
+            </div>
+
             <!-- Overview Stats -->
-            <div class="admin-stats-grid">
+            <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
+                    <div class="stat-icon primary">
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
@@ -140,7 +292,7 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
+                    <div class="stat-icon success">
                         <i class="fas fa-eye"></i>
                     </div>
                     <div class="stat-content">
@@ -150,7 +302,7 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
+                    <div class="stat-icon warning">
                         <i class="fas fa-database"></i>
                     </div>
                     <div class="stat-content">
@@ -160,20 +312,20 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
+                    <div class="stat-icon info">
                         <i class="fas fa-cogs"></i>
                     </div>
                     <div class="stat-content">
-                        <h3 id="totalProcessing">0</h3>
+                        <h3 id="totalPreprocessing">0</h3>
                         <p>Preprocessing Jobs</p>
                     </div>
                 </div>
             </div>
 
             <!-- Today's Stats -->
-            <div class="admin-stats-grid">
+            <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon" style="background: #28a745;">
+                    <div class="stat-icon" style="background: #6f42c1;">
                         <i class="fas fa-calendar-day"></i>
                     </div>
                     <div class="stat-content">
@@ -183,7 +335,7 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon" style="background: #28a745;">
+                    <div class="stat-icon" style="background: #6f42c1;">
                         <i class="fas fa-chart-bar"></i>
                     </div>
                     <div class="stat-content">
@@ -193,7 +345,7 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon" style="background: #ffc107;">
+                    <div class="stat-icon" style="background: #17a2b8;">
                         <i class="fas fa-bolt"></i>
                     </div>
                     <div class="stat-content">
@@ -203,7 +355,7 @@
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon" style="background: #17a2b8;">
+                    <div class="stat-icon" style="background: #fd7e14;">
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
@@ -214,86 +366,92 @@
             </div>
 
             <!-- Charts -->
-            <div class="chart-row">
-                <div class="chart-container">
+            <div class="charts-container">
+                <div class="chart-wrapper">
                     <h3><i class="fas fa-chart-line"></i> Daily Activity (30 Days)</h3>
-                    <canvas id="dailyActivityChart" height="250"></canvas>
-                </div>
-            </div>
-
-            <!-- Dataset Analytics -->
-            <div class="admin-stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon" style="background: #6f42c1;">
-                        <i class="fas fa-table"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 id="avgDatasetSize">0 × 0</h3>
-                        <p>Average Dataset Size</p>
+                    <div class="chart-container">
+                        <canvas id="dailyActivityChart"></canvas>
                     </div>
                 </div>
                 
-                <div class="stat-card">
-                    <div class="stat-icon" style="background: #6f42c1;">
-                        <i class="fas fa-download"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 id="totalDownloads">0</h3>
-                        <p>Total Downloads</p>
-                    </div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon" style="background: #6f42c1;">
-                        <i class="fas fa-robot"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 id="totalComparisons">0</h3>
-                        <p>Model Comparisons</p>
-                    </div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon" style="background: #6f42c1;">
-                        <i class="fas fa-list-ol"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 id="maxRows">0</h3>
-                        <p>Largest Dataset (rows)</p>
+                <div class="chart-wrapper">
+                    <h3><i class="fas fa-chart-pie"></i> Dataset Processing</h3>
+                    <div class="chart-container">
+                        <canvas id="datasetChart"></canvas>
                     </div>
                 </div>
             </div>
 
-            <!-- Recent Activity & Popular Pages -->
-            <div class="chart-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                <div class="chart-container">
-                    <h3><i class="fas fa-history"></i> Recent Activity</h3>
-                    <div class="activity-feed" id="activityFeed">
-                        Loading activity...
+            <!-- Recent Activity -->
+            <div class="recent-activity">
+                <h3><i class="fas fa-history"></i> Recent Activity</h3>
+                <div class="activity-list" id="activityList">
+                    <div class="activity-item">
+                        <div class="activity-icon">
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </div>
+                        <div class="activity-content">
+                            <div class="activity-title">Loading activity...</div>
+                        </div>
                     </div>
                 </div>
-                
-                <div class="chart-container">
-                    <h3><i class="fas fa-star"></i> Popular Pages</h3>
-                    <table style="width: 100%; border-collapse: collapse;">
+            </div>
+
+            <!-- Popular Pages -->
+            <div class="chart-wrapper">
+                <h3><i class="fas fa-star"></i> Popular Pages</h3>
+                <div class="table-container">
+                    <table class="analytics-table" id="popularPagesTable">
                         <thead>
                             <tr>
-                                <th style="text-align: left; padding: 10px; border-bottom: 2px solid #eee;">Page</th>
-                                <th style="text-align: left; padding: 10px; border-bottom: 2px solid #eee;">Views</th>
-                                <th style="text-align: left; padding: 10px; border-bottom: 2px solid #eee;">Last</th>
+                                <th>Page</th>
+                                <th>Views</th>
+                                <th>Last Activity</th>
                             </tr>
                         </thead>
-                        <tbody id="popularPages">
+                        <tbody>
                             <tr><td colspan="3">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
-            
-            <!-- User Flow -->
-            <div class="chart-container">
-                <h3><i class="fas fa-project-diagram"></i> User Flow (Top Transitions)</h3>
-                <canvas id="userFlowChart" height="300"></canvas>
+
+            <!-- Dataset Statistics -->
+            <div class="chart-wrapper">
+                <h3><i class="fas fa-table"></i> Dataset Statistics</h3>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                    <div class="stat-card" style="flex-direction: column; text-align: center; gap: 10px;">
+                        <div class="stat-icon" style="background: #20c997;">
+                            <i class="fas fa-upload"></i>
+                        </div>
+                        <h3 id="totalUploads">0</h3>
+                        <p>Total Uploads</p>
+                    </div>
+                    
+                    <div class="stat-card" style="flex-direction: column; text-align: center; gap: 10px;">
+                        <div class="stat-icon" style="background: #20c997;">
+                            <i class="fas fa-download"></i>
+                        </div>
+                        <h3 id="totalDownloads">0</h3>
+                        <p>Total Downloads</p>
+                    </div>
+                    
+                    <div class="stat-card" style="flex-direction: column; text-align: center; gap: 10px;">
+                        <div class="stat-icon" style="background: #20c997;">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <h3 id="totalComparisons">0</h3>
+                        <p>Model Comparisons</p>
+                    </div>
+                    
+                    <div class="stat-card" style="flex-direction: column; text-align: center; gap: 10px;">
+                        <div class="stat-icon" style="background: #20c997;">
+                            <i class="fas fa-columns"></i>
+                        </div>
+                        <h3 id="avgColumns">0</h3>
+                        <p>Avg Columns/Dataset</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -3,187 +3,528 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Preprocessing & Model Comparison</title>
+    <title>DataPrePro AI - Data Preprocessing & Model Comparison</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="https://cdn-icons-png.flaticon.com/512/2103/2103655.png">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1><i class="fas fa-chart-line"></i> DataPrePro AI</h1>
-            <p class="subtitle">Upload, preprocess, and compare machine learning models in one click</p>
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-container">
+                <div class="logo">
+                    <i class="fas fa-chart-line"></i>
+                    <span>DataPrePro AI</span>
+                </div>
+                <p class="tagline">Upload, Preprocess, Compare & Deploy ML Models</p>
+            </div>
+            <div class="header-actions">
+                <a href="admin.html" class="admin-link">
+                    <i class="fas fa-chart-bar"></i> Analytics Dashboard
+                </a>
+                <button class="btn btn-outline" onclick="showHelp()">
+                    <i class="fas fa-question-circle"></i> Help
+                </button>
+            </div>
         </header>
 
-        <div class="main-content">
-            <!-- Step 1: Upload Section -->
-            <section id="upload-section" class="card active">
-                <h2><i class="fas fa-cloud-upload-alt"></i> Step 1: Upload Your Dataset</h2>
-                <div class="upload-area" id="uploadArea">
-                    <i class="fas fa-file-upload fa-3x"></i>
-                    <p>Drag & drop your CSV or Excel file here</p>
-                    <p class="file-types">Supported formats: .csv, .xls, .xlsx</p>
-                    <input type="file" id="fileInput" accept=".csv,.xls,.xlsx">
-                    <button class="btn" onclick="document.getElementById('fileInput').click()">
-                        <i class="fas fa-folder-open"></i> Browse Files
-                    </button>
+        <!-- Main Content -->
+        <main class="app-main">
+            <!-- Progress Indicator -->
+            <div class="progress-indicator">
+                <div class="step active" data-step="1">
+                    <div class="step-number">1</div>
+                    <div class="step-label">Upload Dataset</div>
                 </div>
-                <div id="fileInfo" class="file-info hidden">
-                    <div class="file-details">
-                        <i class="fas fa-file-csv"></i>
-                        <div>
-                            <h4 id="fileName"></h4>
-                            <p id="fileStats"></p>
+                <div class="step" data-step="2">
+                    <div class="step-number">2</div>
+                    <div class="step-label">Preprocess Data</div>
+                </div>
+                <div class="step" data-step="3">
+                    <div class="step-number">3</div>
+                    <div class="step-label">Compare Models</div>
+                </div>
+                <div class="step" data-step="4">
+                    <div class="step-number">4</div>
+                    <div class="step-label">Download Results</div>
+                </div>
+            </div>
+
+            <!-- Step 1: Upload Dataset -->
+            <section id="step-upload" class="app-step active">
+                <div class="step-header">
+                    <h2><i class="fas fa-cloud-upload-alt"></i> Step 1: Upload Your Dataset</h2>
+                    <p class="step-description">Upload your CSV or Excel file to begin preprocessing and model comparison</p>
+                </div>
+
+                <div class="upload-container">
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-icon">
+                            <i class="fas fa-file-upload"></i>
                         </div>
-                        <button class="btn btn-success" onclick="proceedToPreprocessing()">
-                            <i class="fas fa-arrow-right"></i> Proceed to Preprocessing
+                        <h3>Drag & Drop Your File Here</h3>
+                        <p class="upload-info">Supported formats: CSV, XLS, XLSX (Max 100MB)</p>
+                        <p class="upload-info">Or click below to browse files</p>
+                        <input type="file" id="fileInput" accept=".csv,.xls,.xlsx" hidden>
+                        <button class="btn btn-primary btn-large" onclick="document.getElementById('fileInput').click()">
+                            <i class="fas fa-folder-open"></i> Browse Files
+                        </button>
+                    </div>
+
+                    <div class="file-info-card hidden" id="fileInfoCard">
+                        <div class="file-header">
+                            <i class="fas fa-file-csv"></i>
+                            <div class="file-details">
+                                <h4 id="fileName">dataset.csv</h4>
+                                <div class="file-stats">
+                                    <span class="stat"><i class="fas fa-table"></i> <span id="fileRows">0</span> rows</span>
+                                    <span class="stat"><i class="fas fa-columns"></i> <span id="fileColumns">0</span> columns</span>
+                                    <span class="stat"><i class="fas fa-database"></i> <span id="fileSize">0</span> KB</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="file-preview" id="filePreview">
+                            <!-- Preview table will be inserted here -->
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn btn-success" onclick="proceedToPreprocessing()">
+                                <i class="fas fa-arrow-right"></i> Continue to Preprocessing
+                            </button>
+                            <button class="btn btn-outline" onclick="clearUpload()">
+                                <i class="fas fa-times"></i> Choose Different File
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sample-datasets">
+                    <h4><i class="fas fa-vial"></i> Try with Sample Datasets:</h4>
+                    <div class="sample-buttons">
+                        <button class="btn btn-outline" onclick="loadSampleDataset('titanic')">
+                            <i class="fas fa-ship"></i> Titanic Dataset
+                        </button>
+                        <button class="btn btn-outline" onclick="loadSampleDataset('iris')">
+                            <i class="fas fa-seedling"></i> Iris Dataset
+                        </button>
+                        <button class="btn btn-outline" onclick="loadSampleDataset('housing')">
+                            <i class="fas fa-home"></i> Housing Dataset
                         </button>
                     </div>
                 </div>
             </section>
 
-            <!-- Step 2: Preprocessing Section -->
-            <section id="preprocessing-section" class="card">
-                <h2><i class="fas fa-cogs"></i> Step 2: Preprocessing Configuration</h2>
-                <div class="preprocessing-controls">
-                    <div class="dataset-overview">
-                        <h3>Dataset Overview</h3>
-                        <div id="datasetOverview"></div>
+            <!-- Step 2: Preprocessing -->
+            <section id="step-preprocess" class="app-step">
+                <div class="step-header">
+                    <h2><i class="fas fa-cogs"></i> Step 2: Configure Preprocessing</h2>
+                    <p class="step-description">Clean and prepare your data for machine learning models</p>
+                </div>
+
+                <div class="preprocessing-container">
+                    <!-- Left: Dataset Overview -->
+                    <div class="preprocess-left">
+                        <div class="card">
+                            <h3><i class="fas fa-info-circle"></i> Dataset Overview</h3>
+                            <div id="datasetOverview">
+                                <div class="overview-stats">
+                                    <div class="stat-box">
+                                        <div class="stat-value" id="overviewRows">0</div>
+                                        <div class="stat-label">Total Rows</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="stat-value" id="overviewColumns">0</div>
+                                        <div class="stat-label">Total Columns</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="stat-value" id="overviewMissing">0</div>
+                                        <div class="stat-label">Missing Values</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="stat-value" id="overviewDuplicates">0</div>
+                                        <div class="stat-label">Duplicates</div>
+                                    </div>
+                                </div>
+                                <div class="columns-list">
+                                    <h4>Columns:</h4>
+                                    <div id="columnsContainer" class="columns-grid">
+                                        <!-- Columns will be inserted here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h3><i class="fas fa-history"></i> Selected Steps</h3>
+                            <div class="selected-steps" id="selectedSteps">
+                                <p class="empty-message">No preprocessing steps selected yet</p>
+                                <!-- Steps will be inserted here -->
+                            </div>
+                            <div class="step-actions">
+                                <button class="btn btn-outline" onclick="clearSelectedSteps()">
+                                    <i class="fas fa-trash"></i> Clear All
+                                </button>
+                                <button class="btn btn-primary" onclick="applyAutoPreprocessing()">
+                                    <i class="fas fa-magic"></i> Auto Preprocess
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="preprocessing-actions">
-                        <h3>Preprocessing Actions</h3>
-                        
-                        <!-- Column Selection -->
-                        <div class="action-group">
-                            <label>Select Column:</label>
-                            <select id="columnSelect" onchange="updateColumnActions()">
-                                <option value="">-- Select a column --</option>
-                            </select>
+                    <!-- Right: Preprocessing Controls -->
+                    <div class="preprocess-right">
+                        <div class="card">
+                            <h3><i class="fas fa-sliders-h"></i> Preprocessing Controls</h3>
+                            
+                            <div class="control-group">
+                                <label for="columnSelect">Select Column:</label>
+                                <select id="columnSelect" class="form-select" onchange="onColumnSelected()">
+                                    <option value="">-- Choose a column --</option>
+                                </select>
+                            </div>
+
+                            <div class="control-group" id="columnInfo">
+                                <!-- Column info will be inserted here -->
+                            </div>
+
+                            <div class="preprocessing-actions" id="preprocessingActions">
+                                <!-- Action buttons will be inserted here -->
+                            </div>
+
+                            <div class="action-modal hidden" id="actionModal">
+                                <!-- Modal for action configuration -->
+                            </div>
                         </div>
 
-                        <!-- Action Buttons -->
-                        <div class="action-buttons" id="actionButtons">
-                            <!-- Actions will be populated based on column selection -->
-                        </div>
-
-                        <!-- Selected Steps -->
-                        <div class="selected-steps">
-                            <h4>Selected Preprocessing Steps</h4>
-                            <div id="selectedStepsList"></div>
-                        </div>
-
-                        <!-- Apply Preprocessing -->
-                        <div class="process-actions">
-                            <button class="btn btn-primary" onclick="applyPreprocessing()">
+                        <div class="card">
+                            <h3><i class="fas fa-play-circle"></i> Start Processing</h3>
+                            <p>Apply all selected preprocessing steps to your dataset:</p>
+                            <button class="btn btn-success btn-large" onclick="startPreprocessing()" id="processBtn">
                                 <i class="fas fa-play"></i> Apply Preprocessing
                             </button>
-                            <button class="btn btn-secondary" onclick="autoPreprocess()">
-                                <i class="fas fa-magic"></i> Auto Preprocess
-                            </button>
+                            <div class="progress-container hidden" id="progressContainer">
+                                <div class="progress-header">
+                                    <span>Processing...</span>
+                                    <span id="progressPercent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progressFill"></div>
+                                </div>
+                                <p class="progress-text" id="progressText">Initializing...</p>
+                            </div>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Progress Bar -->
-                <div id="processingProgress" class="hidden">
-                    <h3>Processing Progress</h3>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
-                    <p id="progressText">Processing...</p>
-                </div>
-
-                <!-- Results -->
-                <div id="preprocessingResults" class="hidden">
-                    <h3>Preprocessing Report</h3>
-                    <div id="preprocessingReport"></div>
-                    <div class="result-actions">
-                        <button class="btn btn-success" onclick="proceedToModelComparison()">
-                            <i class="fas fa-robot"></i> Compare Models
-                        </button>
-                        <button class="btn btn-download" onclick="downloadProcessed()">
-                            <i class="fas fa-download"></i> Download Processed Data
-                        </button>
                     </div>
                 </div>
             </section>
 
             <!-- Step 3: Model Comparison -->
-            <section id="model-section" class="card">
-                <h2><i class="fas fa-chart-bar"></i> Step 3: Model Comparison</h2>
-                
-                <!-- Target Column Selection -->
-                <div class="target-selection">
-                    <h3>Select Target Column for Prediction</h3>
-                    <select id="targetColumnSelect">
-                        <option value="">-- Select target column --</option>
-                    </select>
-                    <button class="btn btn-primary" onclick="startModelComparison()">
-                        <i class="fas fa-play-circle"></i> Run Model Comparison
-                    </button>
+            <section id="step-models" class="app-step">
+                <div class="step-header">
+                    <h2><i class="fas fa-robot"></i> Step 3: Compare Machine Learning Models</h2>
+                    <p class="step-description">See how preprocessing improves model performance across 6 algorithms</p>
                 </div>
 
-                <!-- Comparison Progress -->
-                <div id="comparisonProgress" class="hidden">
-                    <h3>Running Models...</h3>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="modelProgressFill"></div>
-                    </div>
-                    <div class="model-status">
-                        <div id="modelStatus"></div>
-                    </div>
-                </div>
-
-                <!-- Results Table -->
-                <div id="comparisonResults" class="hidden">
-                    <h3>Model Performance Comparison</h3>
-                    <div class="comparison-table">
-                        <table id="resultsTable">
-                            <thead>
-                                <tr>
-                                    <th>Model</th>
-                                    <th>Original Data</th>
-                                    <th>Processed Data</th>
-                                    <th>Improvement</th>
-                                    <th>Metric</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="results-summary">
-                        <h4>Summary</h4>
-                        <div id="summaryStats"></div>
+                <div class="models-container">
+                    <!-- Model Selection -->
+                    <div class="card">
+                        <h3><i class="fas fa-crosshairs"></i> Select Target Column</h3>
+                        <p>Choose which column you want to predict (target variable):</p>
+                        <div class="control-group">
+                            <label for="targetColumnSelect">Target Column:</label>
+                            <select id="targetColumnSelect" class="form-select">
+                                <option value="">-- Select target column --</option>
+                            </select>
+                        </div>
+                        <div class="model-info" id="modelInfo">
+                            <!-- Model info will be inserted here -->
+                        </div>
+                        <button class="btn btn-primary btn-large" onclick="startModelComparison()" id="compareBtn">
+                            <i class="fas fa-play-circle"></i> Run Model Comparison
+                        </button>
                     </div>
 
-                    <div class="final-actions">
-                        <button class="btn btn-success" onclick="resetApplication()">
-                            <i class="fas fa-redo"></i> Process New Dataset
-                        </button>
-                        <button class="btn btn-download" onclick="downloadResults()">
-                            <i class="fas fa-file-export"></i> Export Results
-                        </button>
+                    <!-- Comparison Progress -->
+                    <div class="card hidden" id="comparisonProgress">
+                        <h3><i class="fas fa-spinner fa-spin"></i> Running Models...</h3>
+                        <div class="models-progress">
+                            <div class="model-status-grid" id="modelStatusGrid">
+                                <!-- Model status will be inserted here -->
+                            </div>
+                            <div class="overall-progress">
+                                <div class="progress-header">
+                                    <span>Overall Progress</span>
+                                    <span id="modelProgressPercent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="modelProgressFill"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Results -->
+                    <div class="card hidden" id="comparisonResults">
+                        <h3><i class="fas fa-chart-bar"></i> Model Comparison Results</h3>
+                        <div class="results-header">
+                            <div class="result-stat">
+                                <div class="stat-value" id="bestModelName">-</div>
+                                <div class="stat-label">Best Model</div>
+                            </div>
+                            <div class="result-stat">
+                                <div class="stat-value" id="avgImprovement">0%</div>
+                                <div class="stat-label">Avg Improvement</div>
+                            </div>
+                            <div class="result-stat">
+                                <div class="stat-value" id="problemType">-</div>
+                                <div class="stat-label">Problem Type</div>
+                            </div>
+                        </div>
+                        
+                        <div class="comparison-table-container">
+                            <table class="comparison-table" id="comparisonTable">
+                                <thead>
+                                    <tr>
+                                        <th>Model</th>
+                                        <th>Original Data</th>
+                                        <th>Processed Data</th>
+                                        <th>Improvement</th>
+                                        <th>Metric</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Results will be inserted here -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="visualization-container">
+                            <h4><i class="fas fa-chart-line"></i> Performance Visualization</h4>
+                            <div class="chart-placeholder" id="chartPlaceholder">
+                                <p>Chart will appear here after comparison</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
-        </div>
+
+            <!-- Step 4: Download -->
+            <section id="step-download" class="app-step">
+                <div class="step-header">
+                    <h2><i class="fas fa-download"></i> Step 4: Download Results</h2>
+                    <p class="step-description">Get your processed data and comparison results</p>
+                </div>
+
+                <div class="download-container">
+                    <div class="download-grid">
+                        <!-- Processed Data -->
+                        <div class="download-card">
+                            <div class="download-icon success">
+                                <i class="fas fa-file-csv"></i>
+                            </div>
+                            <h3>Processed Dataset</h3>
+                            <p>Download your cleaned and preprocessed dataset</p>
+                            <div class="file-info">
+                                <div class="info-row">
+                                    <span class="label">File Size:</span>
+                                    <span id="processedSize">Calculating...</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="label">Rows × Columns:</span>
+                                    <span id="processedDimensions">-</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-success" onclick="downloadProcessedData()" id="downloadProcessedBtn">
+                                <i class="fas fa-download"></i> Download CSV
+                            </button>
+                        </div>
+
+                        <!-- Comparison Report -->
+                        <div class="download-card">
+                            <div class="download-icon primary">
+                                <i class="fas fa-chart-bar"></i>
+                            </div>
+                            <h3>Comparison Report</h3>
+                            <p>Detailed PDF report of model comparison</p>
+                            <div class="file-info">
+                                <div class="info-row">
+                                    <span class="label">Best Model:</span>
+                                    <span id="reportBestModel">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="label">Improvement:</span>
+                                    <span id="reportImprovement">-</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" onclick="downloadComparisonReport()">
+                                <i class="fas fa-file-pdf"></i> Download Report
+                            </button>
+                        </div>
+
+                        <!-- Preprocessing Report -->
+                        <div class="download-card">
+                            <div class="download-icon warning">
+                                <i class="fas fa-clipboard-list"></i>
+                            </div>
+                            <h3>Preprocessing Report</h3>
+                            <p>Summary of all preprocessing steps applied</p>
+                            <div class="file-info">
+                                <div class="info-row">
+                                    <span class="label">Steps Applied:</span>
+                                    <span id="reportSteps">0</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="label">Duplicates Removed:</span>
+                                    <span id="reportDuplicates">0</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-warning" onclick="downloadPreprocessingReport()">
+                                <i class="fas fa-file-alt"></i> Download Report
+                            </button>
+                        </div>
+
+                        <!-- Analytics Data -->
+                        <div class="download-card">
+                            <div class="download-icon info">
+                                <i class="fas fa-database"></i>
+                            </div>
+                            <h3>Complete Analysis</h3>
+                            <p>All data, models, and reports in one ZIP file</p>
+                            <div class="file-info">
+                                <div class="info-row">
+                                    <span class="label">Includes:</span>
+                                    <span>All files + metadata</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-info" onclick="downloadCompleteAnalysis()">
+                                <i class="fas fa-file-archive"></i> Download ZIP
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="download-summary">
+                        <h3><i class="fas fa-clipboard-check"></i> Summary</h3>
+                        <div class="summary-grid">
+                            <div class="summary-item">
+                                <i class="fas fa-check-circle success"></i>
+                                <span>Dataset uploaded and validated</span>
+                            </div>
+                            <div class="summary-item">
+                                <i class="fas fa-check-circle success"></i>
+                                <span>Preprocessing steps applied</span>
+                            </div>
+                            <div class="summary-item">
+                                <i class="fas fa-check-circle success"></i>
+                                <span>Models compared and analyzed</span>
+                            </div>
+                            <div class="summary-item">
+                                <i class="fas fa-check-circle success"></i>
+                                <span>Results ready for download</span>
+                            </div>
+                        </div>
+                        
+                        <div class="final-actions">
+                            <button class="btn btn-outline" onclick="resetApplication()">
+                                <i class="fas fa-redo"></i> Process Another Dataset
+                            </button>
+                            <button class="btn btn-primary" onclick="shareResults()">
+                                <i class="fas fa-share-alt"></i> Share Results
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
 
         <!-- Footer -->
-        <footer>
-            <p>DataPrePro AI &copy; 2024 | One-click data preprocessing and model comparison</p>
+        <footer class="app-footer">
+            <div class="footer-content">
+                <div class="footer-left">
+                    <div class="logo">
+                        <i class="fas fa-chart-line"></i>
+                        <span>DataPrePro AI</span>
+                    </div>
+                    <p class="footer-description">
+                        Advanced data preprocessing and machine learning comparison tool
+                    </p>
+                </div>
+                <div class="footer-right">
+                    <div class="footer-links">
+                        <a href="#" onclick="showHelp()">Help & Documentation</a>
+                        <a href="admin.html">Analytics Dashboard</a>
+                        <a href="#" onclick="showPrivacyPolicy()">Privacy Policy</a>
+                    </div>
+                    <div class="footer-stats">
+                        <span id="sessionTime">Session: 0m</span>
+                        <span id="pageViews">Views: 0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 DataPrePro AI. All rights reserved.</p>
+            </div>
         </footer>
     </div>
 
     <!-- Loading Modal -->
-    <div id="loadingModal" class="modal hidden">
+    <div class="modal-overlay hidden" id="loadingModal">
         <div class="modal-content">
             <div class="loader"></div>
-            <h3 id="loadingText">Processing...</h3>
+            <h3 id="loadingMessage">Processing...</h3>
+            <p id="loadingDetails">Please wait while we process your request</p>
         </div>
     </div>
 
+    <!-- Help Modal -->
+    <div class="modal-overlay hidden" id="helpModal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2><i class="fas fa-question-circle"></i> Help & Documentation</h2>
+                <button class="close-btn" onclick="closeHelp()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="help-section">
+                    <h3><i class="fas fa-cloud-upload-alt"></i> Uploading Datasets</h3>
+                    <p>Upload CSV or Excel files (max 100MB). The system will automatically:</p>
+                    <ul>
+                        <li>Detect column types and missing values</li>
+                        <li>Show data preview and statistics</li>
+                        <li>Validate data format and structure</li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-cogs"></i> Preprocessing Features</h3>
+                    <p>Available preprocessing options:</p>
+                    <ul>
+                        <li><strong>Drop columns</strong> with >50% missing values</li>
+                        <li><strong>Remove duplicate rows</strong></li>
+                        <li><strong>Fill missing values</strong> (mean, median, mode, custom)</li>
+                        <li><strong>Change data types</strong> (numeric, string, datetime)</li>
+                        <li><strong>Encode categorical</strong> (label encoding, one-hot encoding)</li>
+                        <li><strong>Remove outliers</strong> using IQR method</li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-robot"></i> Machine Learning Models</h3>
+                    <p>6 models compared before and after preprocessing:</p>
+                    <ul>
+                        <li><strong>Linear Regression</strong> - For continuous values</li>
+                        <li><strong>Logistic Regression</strong> - For classification</li>
+                        <li><strong>Random Forest</strong> - Ensemble method</li>
+                        <li><strong>Decision Tree</strong> - Tree-based model</li>
+                        <li><strong>SVM</strong> - Support Vector Machine</li>
+                        <li><strong>K-Means</strong> - Clustering algorithm</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
