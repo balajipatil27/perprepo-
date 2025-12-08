@@ -2,10 +2,17 @@
 const CONFIG = {
     BACKEND_URL: window.location.hostname === 'localhost' 
         ? 'http://localhost:5000' 
+<<<<<<< HEAD
         : 'https://dataprepo-backend.onrender.com',
     ADMIN_TOKEN: 'admin123',
     MAX_FILE_SIZE: 100 * 1024 * 1024,
     SESSION_TIMEOUT: 30 * 60 * 1000,
+=======
+        : 'https://dataprepo-backend.onrender.com', // CHANGE THIS FOR DEPLOYMENT
+    ADMIN_TOKEN: 'admin123', // CHANGE THIS IN PRODUCTION
+    MAX_FILE_SIZE: 100 * 1024 * 1024, // 100MB
+    SESSION_TIMEOUT: 30 * 60 * 1000, // 30 minutes
+>>>>>>> 412a3cfdfe94d6d42e8f8931033b9f5accd7222e
     TRACKING_ENABLED: true
 };
 

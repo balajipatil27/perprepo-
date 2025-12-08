@@ -2,7 +2,7 @@
 const ADMIN_CONFIG = {
     BACKEND_URL: window.location.hostname === 'localhost' 
         ? 'http://localhost:5000' 
-        : 'https://your-backend-service.onrender.com', // CHANGE THIS FOR DEPLOYMENT
+        : 'https://dataprepo-backend.onrender.com', // CHANGE THIS FOR DEPLOYMENT
     ADMIN_TOKEN: localStorage.getItem('admin_token') || 'admin123',
     REFRESH_INTERVAL: 30000, // 30 seconds
     CHARTS: {}

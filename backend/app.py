@@ -458,6 +458,8 @@ def get_job_status(job_id):
     
     return create_response(job_data)
 
+# NOTE: MAKE SURE THIS IS THE ONLY compare_models FUNCTION DEFINED
+# If you have another one, remove it!
 @app.route('/dataset/<dataset_id>/compare', methods=['POST'])
 def compare_models(dataset_id):
     """Compare models before and after preprocessing"""
