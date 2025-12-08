@@ -2,10 +2,10 @@
 const CONFIG = {
     BACKEND_URL: window.location.hostname === 'localhost' 
         ? 'http://localhost:5000' 
-        : 'https://your-backend-service.onrender.com', // CHANGE THIS FOR DEPLOYMENT
-    ADMIN_TOKEN: 'admin123', // CHANGE THIS IN PRODUCTION
-    MAX_FILE_SIZE: 100 * 1024 * 1024, // 100MB
-    SESSION_TIMEOUT: 30 * 60 * 1000, // 30 minutes
+        : 'https://dataprepo-backend.onrender.com',
+    ADMIN_TOKEN: 'admin123',
+    MAX_FILE_SIZE: 100 * 1024 * 1024,
+    SESSION_TIMEOUT: 30 * 60 * 1000,
     TRACKING_ENABLED: true
 };
 
@@ -19,6 +19,7 @@ let appState = {
     preprocessingSteps: [],
     currentJobId: null,
     processedFile: null,
+    preprocessingReport: null,
     comparisonResults: null,
     analyticsData: {
         pageViews: 0,
@@ -35,19 +36,24 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initializeApp() {
+    console.log('Initializing app with backend:', CONFIG.BACKEND_URL);
+    
     // Initialize session
     appState.sessionId = getOrCreateSessionId();
     
     // Update session time display
     updateSessionTime();
-    setInterval(updateSessionTime, 60000); // Update every minute
+    setInterval(updateSessionTime, 60000);
     
     // Check for existing state in localStorage
     loadAppState();
     
     // Update UI based on state
-    updateProgressIndicator();
+    updateProgressIndicator(appState.currentStep);
     showStep(appState.currentStep);
+    
+    // Setup navigation
+    setupStepNavigation();
     
     // Initialize any charts
     initializeCharts();
@@ -63,18 +69,18 @@ function setupEventListeners() {
     // Drag and drop
     uploadArea.addEventListener('dragover', (e) => {
         e.preventDefault();
-        uploadArea.style.borderColor = CONFIG.primaryColor;
-        uploadArea.style.background = 'rgba(74, 111, 165, 0.05)';
+        uploadArea.style.borderColor = '#2c5282';
+        uploadArea.style.background = 'rgba(44, 82, 130, 0.05)';
     });
     
     uploadArea.addEventListener('dragleave', () => {
-        uploadArea.style.borderColor = '';
+        uploadArea.style.borderColor = '#4a6fa5';
         uploadArea.style.background = '';
     });
     
     uploadArea.addEventListener('drop', (e) => {
         e.preventDefault();
-        uploadArea.style.borderColor = '';
+        uploadArea.style.borderColor = '#4a6fa5';
         uploadArea.style.background = '';
         
         const files = e.dataTransfer.files;
@@ -98,7 +104,242 @@ function setupEventListeners() {
         if (e.key === 'Escape') {
             closeModal();
         }
+        // Left arrow key - go back
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            goBack();
+        }
+        // Right arrow key - go next
+        else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            goNext();
+        }
+        // Home key - go to step 1
+        else if (e.key === 'Home') {
+            e.preventDefault();
+            goToHome();
+        }
+        // Number keys 1-4 - go to specific step
+        else if (e.key >= '1' && e.key <= '4') {
+            e.preventDefault();
+            const stepNumber = parseInt(e.key);
+            goToStep(stepNumber);
+        }
     });
+}
+
+// ==================== NAVIGATION FUNCTIONS ====================
+
+function goToHome() {
+    showStep(1);
+    trackPageView('navigation', 'go_home');
+}
+
+function goToStep(stepNumber) {
+    // Validate if we can go to this step
+    switch(stepNumber) {
+        case 1:
+            // Always can go to step 1
+            break;
+        case 2:
+            if (!appState.datasetId) {
+                showNotification('Please upload a dataset first', 'error');
+                return;
+            }
+            break;
+        case 3:
+            if (!appState.processedFile) {
+                showNotification('Please preprocess the dataset first', 'error');
+                return;
+            }
+            break;
+        case 4:
+            if (!appState.comparisonResults) {
+                showNotification('Please run model comparison first', 'error');
+                return;
+            }
+            break;
+    }
+    
+    showStep(stepNumber);
+    trackPageView('navigation', `go_to_step_${stepNumber}`);
+}
+
+function goBack() {
+    if (appState.currentStep > 1) {
+        const prevStep = appState.currentStep - 1;
+        
+        // Validate previous step
+        switch(prevStep) {
+            case 2:
+                if (!appState.datasetId) {
+                    // If no dataset, go to step 1 instead
+                    goToHome();
+                    return;
+                }
+                break;
+            case 3:
+                if (!appState.processedFile) {
+                    goToStep(2);
+                    return;
+                }
+                break;
+        }
+        
+        showStep(prevStep);
+        trackPageView('navigation', 'go_back');
+    }
+}
+
+function goNext() {
+    if (appState.currentStep < 4) {
+        const nextStep = appState.currentStep + 1;
+        
+        // Validate next step
+        switch(nextStep) {
+            case 2:
+                if (!appState.datasetId) {
+                    showNotification('Please upload a dataset first', 'error');
+                    return;
+                }
+                break;
+            case 3:
+                if (!appState.processedFile) {
+                    showNotification('Please preprocess the dataset first', 'error');
+                    return;
+                }
+                break;
+            case 4:
+                if (!appState.comparisonResults) {
+                    showNotification('Please run model comparison first', 'error');
+                    return;
+                }
+                break;
+        }
+        
+        showStep(nextStep);
+        trackPageView('navigation', 'go_next');
+    }
+}
+
+function setupStepNavigation() {
+    // Progress indicator steps
+    document.querySelectorAll('.progress-indicator .step').forEach(step => {
+        step.addEventListener('click', () => {
+            const stepNumber = parseInt(step.getAttribute('data-step'));
+            goToStep(stepNumber);
+        });
+    });
+    
+    // Navbar steps
+    document.querySelectorAll('.navbar-steps .step').forEach(step => {
+        step.addEventListener('click', () => {
+            const stepNumber = parseInt(step.getAttribute('data-step'));
+            goToStep(stepNumber);
+        });
+    });
+}
+
+function showStep(stepNumber) {
+    // Hide all steps
+    document.querySelectorAll('.app-step').forEach(step => {
+        step.classList.remove('active');
+    });
+    
+    // Show selected step
+    const stepElement = document.getElementById(`step-${getStepName(stepNumber)}`);
+    if (stepElement) {
+        stepElement.classList.add('active');
+    }
+    
+    // Update progress indicator
+    updateProgressIndicator(stepNumber);
+    
+    // Update navbar steps
+    document.querySelectorAll('.navbar-steps .step').forEach(step => {
+        step.classList.remove('active');
+    });
+    
+    const navbarStep = document.querySelector(`.navbar-steps .step[data-step="${stepNumber}"]`);
+    if (navbarStep) {
+        navbarStep.classList.add('active');
+    }
+    
+    appState.currentStep = stepNumber;
+    saveAppState();
+    
+    // Load step-specific data
+    loadStepData(stepNumber);
+    
+    // Update navigation buttons state
+    updateNavigationButtons();
+    
+    // Track step change
+    trackPageView(getStepName(stepNumber), 'view');
+}
+
+function updateNavigationButtons() {
+    // Update "Next" button states based on current step and data availability
+    const nextToPreprocessBtn = document.getElementById('nextToPreprocessBtn');
+    const nextToModelsBtn = document.getElementById('nextToModelsBtn');
+    const nextToDownloadBtn = document.getElementById('nextToDownloadBtn');
+    
+    if (nextToPreprocessBtn) {
+        nextToPreprocessBtn.disabled = !appState.datasetId;
+    }
+    
+    if (nextToModelsBtn) {
+        nextToModelsBtn.disabled = !appState.processedFile;
+    }
+    
+    if (nextToDownloadBtn) {
+        nextToDownloadBtn.disabled = !appState.comparisonResults;
+    }
+}
+
+function loadStepData(stepNumber) {
+    switch(stepNumber) {
+        case 1:
+            // Nothing special to load for step 1
+            break;
+        case 2:
+            if (appState.datasetId && !appState.datasetInfo) {
+                loadDatasetInfo();
+            }
+            break;
+        case 3:
+            if (appState.processedFile) {
+                populateTargetColumnSelect();
+            }
+            break;
+        case 4:
+            if (appState.comparisonResults) {
+                updateDownloadSummary();
+            }
+            break;
+    }
+}
+
+function updateProgressIndicator(currentStep) {
+    document.querySelectorAll('.progress-indicator .step').forEach((step, index) => {
+        const stepNum = index + 1;
+        const stepElement = step;
+        
+        // Remove all classes
+        stepElement.classList.remove('active', 'completed');
+        
+        // Add appropriate classes
+        if (stepNum === currentStep) {
+            stepElement.classList.add('active');
+        } else if (stepNum < currentStep) {
+            stepElement.classList.add('completed');
+        }
+    });
+}
+
+function getStepName(stepNumber) {
+    const steps = ['upload', 'preprocess', 'models', 'download'];
+    return steps[stepNumber - 1] || 'upload';
 }
 
 // ==================== SESSION MANAGEMENT ====================
@@ -122,7 +363,6 @@ function loadAppState() {
         const savedState = localStorage.getItem('appState');
         if (savedState) {
             const parsed = JSON.parse(savedState);
-            // Merge with current state, preserving some defaults
             appState = {
                 ...appState,
                 ...parsed,
@@ -172,59 +412,13 @@ function trackPageView(page, action = null, details = {}) {
     saveAppState();
 }
 
-// ==================== STEP NAVIGATION ====================
-function showStep(stepNumber) {
-    // Hide all steps
-    document.querySelectorAll('.app-step').forEach(step => {
-        step.classList.remove('active');
-    });
-    
-    // Show selected step
-    const stepElement = document.getElementById(`step-${getStepName(stepNumber)}`);
-    if (stepElement) {
-        stepElement.classList.add('active');
-    }
-    
-    // Update progress indicator
-    document.querySelectorAll('.step').forEach(step => {
-        step.classList.remove('active');
-    });
-    
-    const stepIndicator = document.querySelector(`.step[data-step="${stepNumber}"]`);
-    if (stepIndicator) {
-        stepIndicator.classList.add('active');
-    }
-    
-    appState.currentStep = stepNumber;
-    saveAppState();
-    
-    // Track step change
-    trackPageView(getStepName(stepNumber), 'view');
-}
-
-function getStepName(stepNumber) {
-    const steps = ['upload', 'preprocess', 'models', 'download'];
-    return steps[stepNumber - 1] || 'upload';
-}
-
-function updateProgressIndicator() {
-    document.querySelectorAll('.step').forEach((step, index) => {
-        const stepNum = index + 1;
-        if (stepNum <= appState.currentStep) {
-            step.classList.add('active');
-        } else {
-            step.classList.remove('active');
-        }
-    });
-}
-
+// ==================== STEP NAVIGATION HELPERS ====================
 function proceedToPreprocessing() {
     if (!appState.datasetId) {
         showNotification('Please upload a dataset first', 'error');
         return;
     }
-    showStep(2);
-    loadDatasetInfo();
+    goToStep(2);
 }
 
 function proceedToModelComparison() {
@@ -232,8 +426,7 @@ function proceedToModelComparison() {
         showNotification('Please preprocess the dataset first', 'error');
         return;
     }
-    showStep(3);
-    populateTargetColumnSelect();
+    goToStep(3);
 }
 
 function proceedToDownload() {
@@ -241,8 +434,7 @@ function proceedToDownload() {
         showNotification('Please run model comparison first', 'error');
         return;
     }
-    showStep(4);
-    updateDownloadSummary();
+    goToStep(4);
 }
 
 // ==================== FILE UPLOAD ====================
@@ -252,13 +444,11 @@ async function handleFileUpload() {
     
     if (!file) return;
     
-    // Validate file size
     if (file.size > CONFIG.MAX_FILE_SIZE) {
         showNotification('File too large (max 100MB)', 'error');
         return;
     }
     
-    // Validate file type
     const validExtensions = ['.csv', '.xls', '.xlsx'];
     const fileExt = '.' + file.name.split('.').pop().toLowerCase();
     if (!validExtensions.includes(fileExt)) {
@@ -280,21 +470,21 @@ async function handleFileUpload() {
         const data = await response.json();
         
         if (response.ok) {
-            // Update app state
             appState.datasetId = data.dataset_id;
             appState.datasetInfo = data;
             
-            // Update UI
             updateFileInfoUI(data, file);
             showNotification('Dataset uploaded successfully!', 'success');
             
-            // Track upload
             trackPageView('upload', 'success', {
                 filename: file.name,
                 size: file.size,
                 rows: data.rows,
                 columns: data.columns
             });
+            
+            // Update navigation buttons
+            updateNavigationButtons();
             
         } else {
             throw new Error(data.error || 'Upload failed');
@@ -308,16 +498,13 @@ async function handleFileUpload() {
 }
 
 function updateFileInfoUI(data, file) {
-    // Update file info card
     document.getElementById('fileName').textContent = data.filename;
     document.getElementById('fileRows').textContent = data.rows.toLocaleString();
     document.getElementById('fileColumns').textContent = data.columns.toLocaleString();
     document.getElementById('fileSize').textContent = Math.round(file.size / 1024);
     
-    // Show file info card
     document.getElementById('fileInfoCard').classList.remove('hidden');
     
-    // Show preview if available
     if (data.preview && data.preview.length > 0) {
         const previewHtml = generatePreviewTable(data.preview);
         document.getElementById('filePreview').innerHTML = previewHtml;
@@ -328,17 +515,15 @@ function generatePreviewTable(data) {
     if (!data || data.length === 0) return '<p>No preview available</p>';
     
     const headers = Object.keys(data[0]);
-    const rows = data.slice(0, 10); // Limit to 10 rows for preview
+    const rows = data.slice(0, 10);
     
     let html = '<table><thead><tr>';
     
-    // Headers
     headers.forEach(header => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr></thead><tbody>';
     
-    // Rows
     rows.forEach(row => {
         html += '<tr>';
         headers.forEach(header => {
@@ -357,7 +542,9 @@ function clearUpload() {
     document.getElementById('fileInfoCard').classList.add('hidden');
     appState.datasetId = null;
     appState.datasetInfo = null;
+    updateNavigationButtons();
     saveAppState();
+    showNotification('File cleared', 'info');
 }
 
 // ==================== DATASET INFO ====================
@@ -386,13 +573,11 @@ async function loadDatasetInfo() {
 }
 
 function updateDatasetOverview(data) {
-    // Update overview stats
     document.getElementById('overviewRows').textContent = data.rows?.toLocaleString() || '0';
     document.getElementById('overviewColumns').textContent = data.columns?.toLocaleString() || '0';
     document.getElementById('overviewMissing').textContent = data.missing_values?.toLocaleString() || '0';
     document.getElementById('overviewDuplicates').textContent = data.duplicates?.toLocaleString() || '0';
     
-    // Update columns display
     if (data.column_info) {
         updateColumnsDisplay(data.column_info);
     }
@@ -458,14 +643,10 @@ function onColumnSelected() {
         return;
     }
     
-    // Find column info
     const column = appState.datasetInfo?.column_info?.find(c => c.name === columnName);
     if (!column) return;
     
-    // Update column info display
     updateColumnInfoDisplay(column);
-    
-    // Update preprocessing actions
     updatePreprocessingActions(column);
 }
 
@@ -506,7 +687,6 @@ function updatePreprocessingActions(column) {
     const container = document.getElementById('preprocessingActions');
     const actions = [];
     
-    // Determine available actions based on column type and characteristics
     if (column.missing > 0) {
         actions.push({
             id: 'fill_missing',
@@ -550,7 +730,6 @@ function updatePreprocessingActions(column) {
         });
     }
     
-    // Always show drop column option
     actions.push({
         id: 'drop_column',
         icon: 'fas fa-trash',
@@ -559,7 +738,6 @@ function updatePreprocessingActions(column) {
         danger: true
     });
     
-    // Generate HTML
     let html = '<div class="preprocessing-actions-grid">';
     actions.forEach(action => {
         html += `
@@ -584,12 +762,10 @@ function showActionModal(action, column) {
     
     let modalContent = '';
     let modalTitle = '';
-    let modalAction = '';
     
     switch (action) {
         case 'fill_missing':
             modalTitle = 'Fill Missing Values';
-            modalAction = 'fill_missing';
             modalContent = `
                 <h4>Select filling method for "${column}":</h4>
                 <div class="method-options">
@@ -615,7 +791,6 @@ function showActionModal(action, column) {
             
         case 'encode_categorical':
             modalTitle = 'Encode Categorical Column';
-            modalAction = 'encode';
             modalContent = `
                 <h4>Select encoding method for "${column}":</h4>
                 <div class="method-options">
@@ -635,7 +810,6 @@ function showActionModal(action, column) {
             
         case 'remove_outliers':
             modalTitle = 'Remove Outliers';
-            modalAction = 'remove_outliers';
             modalContent = `
                 <h4>Remove outliers from "${column}" using IQR method</h4>
                 <p>Values outside 1.5 × IQR will be removed</p>
@@ -648,7 +822,6 @@ function showActionModal(action, column) {
         case 'change_type':
         case 'change_type_string':
             modalTitle = 'Change Data Type';
-            modalAction = 'change_type';
             modalContent = `
                 <h4>Select new data type for "${column}":</h4>
                 <div class="method-options">
@@ -714,7 +887,6 @@ function addPreprocessingStep(action, column, method, value = null) {
         timestamp: new Date().toISOString()
     };
     
-    // Remove any existing step for this column and action
     appState.preprocessingSteps = appState.preprocessingSteps.filter(
         s => !(s.column === column && s.action === action)
     );
@@ -837,10 +1009,8 @@ async function startPreprocessing() {
 function applyAutoPreprocessing() {
     if (!appState.datasetInfo?.column_info) return;
     
-    // Clear existing steps
     appState.preprocessingSteps = [];
     
-    // Add automatic steps based on column analysis
     appState.datasetInfo.column_info.forEach(column => {
         if (column.missing_percent > 50) {
             appState.preprocessingSteps.push({
@@ -871,7 +1041,6 @@ function applyAutoPreprocessing() {
         }
     });
     
-    // Add duplicate removal
     appState.preprocessingSteps.push({
         id: 'auto_remove_duplicates',
         action: 'remove_duplicates',
@@ -910,17 +1079,22 @@ async function pollJobStatus() {
             updateProcessingProgress(data.progress || 0, data.status || 'Processing...');
             
             if (data.status === 'completed' && data.result) {
-                // Processing complete
                 appState.processedFile = data.result.processed_file;
                 appState.preprocessingReport = data.result.report;
                 
                 showNotification('Preprocessing completed!', 'success');
                 
-                // Hide progress, show success
                 setTimeout(() => {
                     document.getElementById('processBtn').classList.remove('hidden');
                     document.getElementById('progressContainer').classList.add('hidden');
-                    proceedToModelComparison();
+                    
+                    // Update navigation buttons
+                    updateNavigationButtons();
+                    
+                    // Auto-proceed to next step if user wants
+                    if (confirm('Preprocessing completed! Would you like to proceed to model comparison?')) {
+                        goToStep(3);
+                    }
                 }, 1000);
                 
             } else if (data.status === 'failed') {
@@ -928,7 +1102,6 @@ async function pollJobStatus() {
                 document.getElementById('processBtn').classList.remove('hidden');
                 document.getElementById('progressContainer').classList.add('hidden');
             } else {
-                // Continue polling
                 setTimeout(pollJobStatus, 1000);
             }
         } else {
@@ -948,7 +1121,6 @@ function populateTargetColumnSelect() {
     select.innerHTML = '<option value="">-- Select target column --</option>';
     
     appState.datasetInfo.column_info.forEach(column => {
-        // Suggest columns with few unique values as potential targets
         const isPotentialTarget = column.unique > 1 && column.unique < 100;
         const option = document.createElement('option');
         option.value = column.name;
@@ -959,7 +1131,6 @@ function populateTargetColumnSelect() {
         select.appendChild(option);
     });
     
-    // Update model info
     updateModelInfo();
 }
 
@@ -998,7 +1169,6 @@ async function startModelComparison() {
     
     showLoading('Starting model comparison...');
     
-    // Show progress UI
     document.getElementById('compareBtn').classList.add('hidden');
     document.getElementById('comparisonProgress').classList.remove('hidden');
     updateModelStatusGrid('initializing');
@@ -1022,11 +1192,13 @@ async function startModelComparison() {
             showComparisonResults(data);
             showNotification('Model comparison completed!', 'success');
             
-            // Track completion
             trackPageView('model_comparison', 'complete', {
                 target_column: targetColumn,
                 model_count: data.comparison?.length || 0
             });
+            
+            // Update navigation buttons
+            updateNavigationButtons();
             
         } else {
             throw new Error(data.error || 'Model comparison failed');
@@ -1061,7 +1233,6 @@ function updateModelStatusGrid(status) {
             statusText = 'Initializing...';
             statusClass = 'running';
         } else if (status === 'running') {
-            // Simulate progress
             const progress = Math.min(100, Math.floor((index / models.length) * 100));
             statusText = `Running... ${progress}%`;
             statusClass = 'running';
@@ -1085,11 +1256,10 @@ function updateModelStatusGrid(status) {
     
     container.innerHTML = html;
     
-    // Update overall progress
     if (status === 'running') {
         const progressFill = document.getElementById('modelProgressFill');
         const progressPercent = document.getElementById('modelProgressPercent');
-        const progress = 50; // Simulate 50% progress
+        const progress = 50;
         progressFill.style.width = `${progress}%`;
         progressPercent.textContent = `${progress}%`;
     } else if (status === 'completed') {
@@ -1101,27 +1271,26 @@ function updateModelStatusGrid(status) {
 }
 
 function showComparisonResults(data) {
-    // Hide progress, show results
     document.getElementById('comparisonProgress').classList.add('hidden');
     document.getElementById('comparisonResults').classList.remove('hidden');
     
-    // Update result stats
     if (data.comparison && data.comparison.length > 0) {
         updateResultStats(data);
         updateComparisonTable(data.comparison);
         createPerformanceChart(data.comparison);
     }
     
-    // Enable download step
+    // Auto-proceed to download if user wants
     setTimeout(() => {
-        proceedToDownload();
+        if (confirm('Model comparison completed! Would you like to proceed to download results?')) {
+            goToStep(4);
+        }
     }, 500);
 }
 
 function updateResultStats(data) {
     const comparisons = data.comparison || [];
     
-    // Find best model
     let bestModel = null;
     let bestScore = -Infinity;
     
@@ -1134,7 +1303,6 @@ function updateResultStats(data) {
         }
     });
     
-    // Calculate average improvement
     let totalImprovement = 0;
     let count = 0;
     
@@ -1147,14 +1315,12 @@ function updateResultStats(data) {
     
     const avgImprovement = count > 0 ? (totalImprovement / count) * 100 : 0;
     
-    // Update UI
     document.getElementById('bestModelName').textContent = bestModel || '-';
     document.getElementById('avgImprovement').textContent = avgImprovement > 0 
         ? `+${avgImprovement.toFixed(1)}%` 
         : `${avgImprovement.toFixed(1)}%`;
     document.getElementById('problemType').textContent = data.problem_type || '-';
     
-    // Update report section
     document.getElementById('reportBestModel').textContent = bestModel || '-';
     document.getElementById('reportImprovement').textContent = avgImprovement > 0 
         ? `+${avgImprovement.toFixed(1)}% improvement` 
@@ -1293,7 +1459,6 @@ async function downloadProcessedData() {
             
             showNotification('Download started!', 'success');
             
-            // Track download
             trackPageView('download', 'processed_data', {
                 filename: appState.processedFile,
                 dataset_id: appState.datasetId
@@ -1318,7 +1483,6 @@ async function downloadComparisonReport() {
     showLoading('Generating comparison report...');
     
     try {
-        // Create PDF report (simplified - in production, generate actual PDF)
         const reportData = {
             title: 'Model Comparison Report',
             dataset: appState.datasetInfo?.filename || 'Unknown',
@@ -1327,7 +1491,6 @@ async function downloadComparisonReport() {
             preprocessing: appState.preprocessingReport
         };
         
-        // For now, download as JSON
         const dataStr = JSON.stringify(reportData, null, 2);
         const dataBlob = new Blob([dataStr], { type: 'application/json' });
         const url = window.URL.createObjectURL(dataBlob);
@@ -1357,7 +1520,6 @@ async function downloadPreprocessingReport() {
     showLoading('Generating preprocessing report...');
     
     try {
-        // Create HTML report
         let reportHTML = `
             <!DOCTYPE html>
             <html>
@@ -1405,7 +1567,6 @@ async function downloadPreprocessingReport() {
             </html>
         `;
         
-        // Download HTML file
         const blob = new Blob([reportHTML], { type: 'text/html' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1429,7 +1590,6 @@ async function downloadCompleteAnalysis() {
     showLoading('Preparing complete analysis package...');
     
     try {
-        // Create ZIP file with all data
         const allData = {
             metadata: {
                 generated: new Date().toISOString(),
@@ -1442,7 +1602,6 @@ async function downloadCompleteAnalysis() {
             comparison_results: appState.comparisonResults
         };
         
-        // Download as JSON
         const dataStr = JSON.stringify(allData, null, 2);
         const blob = new Blob([dataStr], { type: 'application/json' });
         const url = window.URL.createObjectURL(blob);
@@ -1512,14 +1671,12 @@ function showNotification(message, type = 'info', duration = 5000) {
     
     container.appendChild(notification);
     
-    // Auto-remove after duration
     setTimeout(() => {
         notification.style.opacity = '0';
         notification.style.transform = 'translateX(100%)';
         setTimeout(() => notification.remove(), 300);
     }, duration);
     
-    // Track notification
     if (type === 'error') {
         trackPageView('notification', 'error', { message: message.substring(0, 100) });
     }
@@ -1533,16 +1690,16 @@ function escapeHtml(text) {
 
 function resetApplication() {
     if (confirm('Are you sure you want to start over? All current progress will be lost.')) {
-        // Clear app state
         appState = {
             currentStep: 1,
-            sessionId: appState.sessionId, // Keep session ID
+            sessionId: appState.sessionId,
             datasetId: null,
             datasetInfo: null,
             selectedColumns: new Set(),
             preprocessingSteps: [],
             currentJobId: null,
             processedFile: null,
+            preprocessingReport: null,
             comparisonResults: null,
             analyticsData: {
                 pageViews: appState.analyticsData.pageViews,
@@ -1551,14 +1708,11 @@ function resetApplication() {
             }
         };
         
-        // Clear UI
         clearUpload();
         clearSelectedSteps();
         
-        // Reset to first step
         showStep(1);
         
-        // Clear any saved state
         localStorage.removeItem('appState');
         
         showNotification('Application reset. Ready for new dataset!', 'info');
@@ -1568,7 +1722,7 @@ function resetApplication() {
 
 function shareResults() {
     const shareData = {
-        title: 'DataPrePro Analysis Results',
+        title: 'DataPrePro AI Analysis Results',
         text: `Check out my data analysis results from DataPrePro AI!`,
         url: window.location.href
     };
@@ -1578,7 +1732,6 @@ function shareResults() {
             .then(() => showNotification('Results shared successfully!', 'success'))
             .catch(() => showNotification('Sharing cancelled', 'info'));
     } else {
-        // Fallback: copy to clipboard
         navigator.clipboard.writeText(shareData.url)
             .then(() => showNotification('Link copied to clipboard!', 'success'))
             .catch(() => showNotification('Failed to copy link', 'error'));
@@ -1618,7 +1771,6 @@ function loadSampleDataset(type) {
     
     showLoading(`Loading ${sample.description}...`);
     
-    // Simulate file upload with sample data
     fetch(sample.url)
         .then(response => response.blob())
         .then(blob => {
@@ -1641,6 +1793,11 @@ function initializeCharts() {
 // ==================== EXPORT FUNCTIONS FOR HTML ====================
 window.proceedToPreprocessing = proceedToPreprocessing;
 window.proceedToModelComparison = proceedToModelComparison;
+window.proceedToDownload = proceedToDownload;
+window.goToHome = goToHome;
+window.goToStep = goToStep;
+window.goBack = goBack;
+window.goNext = goNext;
 window.clearUpload = clearUpload;
 window.showHelp = showHelp;
 window.closeHelp = closeHelp;

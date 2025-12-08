@@ -17,9 +17,61 @@ from analytics import SimpleAnalytics
 from preprocessing import DataPreprocessor
 from models import ModelComparator
 
+# ============ FLASK APP INITIALIZATION ============
+
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# ============ CORS CONFIGURATION ============
+# Allow specific origins including your Netlify domain
+allowed_origins = [
+    "https://cool-liger-905e74.netlify.app",
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000"
+]
+
+# Configure CORS properly
+CORS(app, 
+     origins=allowed_origins,
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "X-Admin-Token", "Accept", "Origin"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     expose_headers=["Content-Disposition"],
+     max_age=600)
+
+# Manual CORS middleware as backup
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    
+    if origin and origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
+    return response
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        origin = request.headers.get('Origin')
+        
+        if origin in allowed_origins:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            response.headers['Access-Control-Allow-Origin'] = '*'
+        
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Admin-Token'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '86400'
+        
+        return response
+
+# ============ APP CONFIGURATION ============
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///datasets.db'
@@ -243,11 +295,15 @@ def preprocess_dataset(dataset_id):
         data = request.json or {}
         steps = data.get('steps', [])
         
+        # Get session ID from current request
+        session_id = get_or_create_session_id()
+        
         # Create job
         job_id = str(uuid.uuid4())
         processing_jobs[job_id] = {
             'id': job_id,
             'dataset_id': dataset_id,
+            'session_id': session_id,  # Store session ID for background thread
             'status': 'processing',
             'progress': 0,
             'result': None,
@@ -268,13 +324,12 @@ def preprocess_dataset(dataset_id):
         # Start processing in background thread
         thread = threading.Thread(
             target=_process_dataset_background,
-            args=(job_id, dataset_id, steps)
+            args=(job_id, dataset_id, steps, session_id)  # Pass session ID
         )
         thread.daemon = True
         thread.start()
         
         # Track preprocessing start
-        session_id = get_or_create_session_id()
         track_request('start', 'preprocessing', {
             'dataset_id': dataset_id,
             'steps_count': len(steps)
@@ -290,57 +345,58 @@ def preprocess_dataset(dataset_id):
     except Exception as e:
         return create_response({'error': str(e)}, 500)
 
-def _process_dataset_background(job_id, dataset_id, steps):
-    """Background processing function"""
+def _process_dataset_background(job_id, dataset_id, steps, session_id):
+    """Background processing function - FIXED with application context"""
     try:
-        # Update progress
-        processing_jobs[job_id]['progress'] = 10
+        # Create application context for this thread
+        with app.app_context():
+            # Update progress
+            processing_jobs[job_id]['progress'] = 10
+            
+            # Load dataset
+            dataset = Dataset.query.get(dataset_id)
+            df = read_dataset_file(dataset.filename)
+            
+            # Apply preprocessing
+            preprocessor = DataPreprocessor(df)
+            processing_jobs[job_id]['progress'] = 30
+            
+            # Apply user steps
+            if steps:
+                preprocessor.apply_preprocessing_steps(steps)
+            
+            processing_jobs[job_id]['progress'] = 70
+            
+            # Save processed dataset
+            processed_filename = f"processed_{dataset_id}.csv"
+            processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
+            preprocessor.df.to_csv(processed_path, index=False)
+            
+            # Generate report
+            report = preprocessor.generate_report()
+            
+            # Update job status
+            processing_jobs[job_id]['progress'] = 100
+            processing_jobs[job_id]['status'] = 'completed'
+            processing_jobs[job_id]['result'] = {
+                'processed_file': processed_filename,
+                'report': report,
+                'download_url': f'/download/{processed_filename}',
+                'processed_shape': preprocessor.df.shape
+            }
+            processing_jobs[job_id]['completed_at'] = datetime.utcnow()
+            
+            # Update database job
+            job = ProcessingJob.query.get(job_id)
+            if job:
+                job.status = 'completed'
+                job.progress = 100
+                job.results = json.dumps(processing_jobs[job_id]['result'])
+                job.completed_at = datetime.utcnow()
+                db.session.commit()
         
-        # Load dataset
-        dataset = Dataset.query.get(dataset_id)
-        df = read_dataset_file(dataset.filename)
-        
-        # Apply preprocessing
-        preprocessor = DataPreprocessor(df)
-        processing_jobs[job_id]['progress'] = 30
-        
-        # Apply user steps
-        if steps:
-            preprocessor.apply_preprocessing_steps(steps)
-        
-        processing_jobs[job_id]['progress'] = 70
-        
-        # Save processed dataset
-        processed_filename = f"processed_{dataset_id}.csv"
-        processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
-        preprocessor.df.to_csv(processed_path, index=False)
-        
-        # Generate report
-        report = preprocessor.generate_report()
-        
-        # Update job status
-        processing_jobs[job_id]['progress'] = 100
-        processing_jobs[job_id]['status'] = 'completed'
-        processing_jobs[job_id]['result'] = {
-            'processed_file': processed_filename,
-            'report': report,
-            'download_url': f'/download/{processed_filename}',
-            'processed_shape': preprocessor.df.shape
-        }
-        processing_jobs[job_id]['completed_at'] = datetime.utcnow()
-        
-        # Update database job
-        job = ProcessingJob.query.get(job_id)
-        if job:
-            job.status = 'completed'
-            job.progress = 100
-            job.results = json.dumps(processing_jobs[job_id]['result'])
-            job.completed_at = datetime.utcnow()
-            db.session.commit()
-        
-        # Track completion
+        # Track completion (analytics doesn't need app context)
         processing_time = time.time() - processing_jobs[job_id]['start_time']
-        session_id = get_or_create_session_id()
         analytics.track_dataset_action(
             session_id=session_id,
             dataset_id=dataset_id,
@@ -352,18 +408,19 @@ def _process_dataset_background(job_id, dataset_id, steps):
         )
         
     except Exception as e:
-        # Handle error
-        processing_jobs[job_id]['status'] = 'failed'
-        processing_jobs[job_id]['error'] = str(e)
-        processing_jobs[job_id]['completed_at'] = datetime.utcnow()
-        
-        # Update database job
-        job = ProcessingJob.query.get(job_id)
-        if job:
-            job.status = 'failed'
-            job.results = json.dumps({'error': str(e)})
-            job.completed_at = datetime.utcnow()
-            db.session.commit()
+        # Handle error with app context
+        with app.app_context():
+            processing_jobs[job_id]['status'] = 'failed'
+            processing_jobs[job_id]['error'] = str(e)
+            processing_jobs[job_id]['completed_at'] = datetime.utcnow()
+            
+            # Update database job
+            job = ProcessingJob.query.get(job_id)
+            if job:
+                job.status = 'failed'
+                job.results = json.dumps({'error': str(e)})
+                job.completed_at = datetime.utcnow()
+                db.session.commit()
 
 @app.route('/job/<job_id>/status', methods=['GET'])
 def get_job_status(job_id):
