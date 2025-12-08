@@ -23,7 +23,6 @@ from models import ModelComparator
 app = Flask(__name__)
 
 # ============ CORS CONFIGURATION ============
-# Allow specific origins including your Netlify domain
 allowed_origins = [
     "https://cool-liger-905e74.netlify.app",
     "http://localhost:3000",
@@ -33,7 +32,6 @@ allowed_origins = [
     "http://127.0.0.1:5000"
 ]
 
-# Configure CORS properly
 CORS(app, 
      origins=allowed_origins,
      supports_credentials=True,
@@ -73,12 +71,23 @@ def handle_preflight():
 
 # ============ APP CONFIGURATION ============
 
-# Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///datasets.db'
+# Database configuration for Gunicorn compatibility
+db_path = os.path.join(os.path.dirname(__file__), 'datasets.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# SQLite threading fixes for Gunicorn
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'pool_size': 1,
+    'max_overflow': 0,
+    'pool_timeout': 30,
+}
+
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['PROCESSED_FOLDER'] = 'processed'
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 # Create necessary directories
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -88,9 +97,13 @@ os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 db.init_app(app)
 analytics = SimpleAnalytics('analytics_data.json')
 
-# Create tables
+# Initialize database
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        print("Database initialized successfully")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
 
 # Global storage for jobs
 processing_jobs = {}
@@ -109,13 +122,11 @@ def save_uploaded_file(file):
     if file.filename == '':
         raise ValueError("No file selected")
     
-    # Generate unique filename
     file_id = str(uuid.uuid4())
     original_filename = secure_filename(file.filename)
     filename = f"{file_id}_{original_filename}"
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     
-    # Save file
     file.save(filepath)
     
     return filepath, original_filename, file_id
@@ -137,7 +148,7 @@ def track_request(action, page, details=None):
         session_id = get_or_create_session_id()
         analytics.track_page_view(session_id, page, action, details)
     except:
-        pass  # Silently fail tracking
+        pass
 
 def create_response(data, status=200, session_id=None):
     """Create standardized response"""
@@ -189,10 +200,8 @@ def upload_dataset():
         file = request.files['file']
         session_id = get_or_create_session_id()
         
-        # Save file
         filepath, original_filename, file_id = save_uploaded_file(file)
         
-        # Read dataset to get info
         try:
             df = read_dataset_file(filepath)
         except Exception as e:
@@ -207,8 +216,10 @@ def upload_dataset():
             file_size=os.path.getsize(filepath),
             upload_time=datetime.utcnow()
         )
-        db.session.add(dataset)
-        db.session.commit()
+        
+        with app.app_context():
+            db.session.add(dataset)
+            db.session.commit()
         
         # Track upload
         analytics.track_dataset_action(
@@ -246,18 +257,16 @@ def upload_dataset():
 def get_dataset_info(dataset_id):
     """Get information about a dataset"""
     try:
-        dataset = Dataset.query.get(dataset_id)
-        if not dataset:
-            return create_response({'error': 'Dataset not found'}, 404)
+        with app.app_context():
+            dataset = Dataset.query.get(dataset_id)
+            if not dataset:
+                return create_response({'error': 'Dataset not found'}, 404)
         
-        # Read dataset
         df = read_dataset_file(dataset.filename)
         
-        # Get detailed info
         preprocessor = DataPreprocessor(df)
         column_info = preprocessor.get_column_info()
         
-        # Track view
         session_id = get_or_create_session_id()
         track_request('view', 'dataset_info', {'dataset_id': dataset_id})
         
@@ -287,23 +296,21 @@ def get_dataset_info(dataset_id):
 def preprocess_dataset(dataset_id):
     """Start preprocessing a dataset"""
     try:
-        dataset = Dataset.query.get(dataset_id)
-        if not dataset:
-            return create_response({'error': 'Dataset not found'}, 404)
+        with app.app_context():
+            dataset = Dataset.query.get(dataset_id)
+            if not dataset:
+                return create_response({'error': 'Dataset not found'}, 404)
         
-        # Get preprocessing steps from request
         data = request.json or {}
         steps = data.get('steps', [])
         
-        # Get session ID from current request
         session_id = get_or_create_session_id()
         
-        # Create job
         job_id = str(uuid.uuid4())
         processing_jobs[job_id] = {
             'id': job_id,
             'dataset_id': dataset_id,
-            'session_id': session_id,  # Store session ID for background thread
+            'session_id': session_id,
             'status': 'processing',
             'progress': 0,
             'result': None,
@@ -312,24 +319,23 @@ def preprocess_dataset(dataset_id):
             'created_at': datetime.utcnow()
         }
         
-        # Save job to database
-        job = ProcessingJob(
-            id=job_id,
-            dataset_id=dataset_id,
-            status='processing'
-        )
-        db.session.add(job)
-        db.session.commit()
+        with app.app_context():
+            job = ProcessingJob(
+                id=job_id,
+                dataset_id=dataset_id,
+                status='processing'
+            )
+            db.session.add(job)
+            db.session.commit()
         
         # Start processing in background thread
         thread = threading.Thread(
             target=_process_dataset_background,
-            args=(job_id, dataset_id, steps, session_id)  # Pass session ID
+            args=(job_id, dataset_id, steps, session_id)
         )
         thread.daemon = True
         thread.start()
         
-        # Track preprocessing start
         track_request('start', 'preprocessing', {
             'dataset_id': dataset_id,
             'steps_count': len(steps)
@@ -346,36 +352,29 @@ def preprocess_dataset(dataset_id):
         return create_response({'error': str(e)}, 500)
 
 def _process_dataset_background(job_id, dataset_id, steps, session_id):
-    """Background processing function - FIXED with application context"""
+    """Background processing function"""
     try:
-        # Create application context for this thread
+        # Create application context for database operations
         with app.app_context():
-            # Update progress
             processing_jobs[job_id]['progress'] = 10
             
-            # Load dataset
             dataset = Dataset.query.get(dataset_id)
             df = read_dataset_file(dataset.filename)
             
-            # Apply preprocessing
             preprocessor = DataPreprocessor(df)
             processing_jobs[job_id]['progress'] = 30
             
-            # Apply user steps
             if steps:
                 preprocessor.apply_preprocessing_steps(steps)
             
             processing_jobs[job_id]['progress'] = 70
             
-            # Save processed dataset
             processed_filename = f"processed_{dataset_id}.csv"
             processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_filename)
             preprocessor.df.to_csv(processed_path, index=False)
             
-            # Generate report
             report = preprocessor.generate_report()
             
-            # Update job status
             processing_jobs[job_id]['progress'] = 100
             processing_jobs[job_id]['status'] = 'completed'
             processing_jobs[job_id]['result'] = {
@@ -386,7 +385,6 @@ def _process_dataset_background(job_id, dataset_id, steps, session_id):
             }
             processing_jobs[job_id]['completed_at'] = datetime.utcnow()
             
-            # Update database job
             job = ProcessingJob.query.get(job_id)
             if job:
                 job.status = 'completed'
@@ -395,7 +393,7 @@ def _process_dataset_background(job_id, dataset_id, steps, session_id):
                 job.completed_at = datetime.utcnow()
                 db.session.commit()
         
-        # Track completion (analytics doesn't need app context)
+        # Track completion
         processing_time = time.time() - processing_jobs[job_id]['start_time']
         analytics.track_dataset_action(
             session_id=session_id,
@@ -414,7 +412,6 @@ def _process_dataset_background(job_id, dataset_id, steps, session_id):
             processing_jobs[job_id]['error'] = str(e)
             processing_jobs[job_id]['completed_at'] = datetime.utcnow()
             
-            # Update database job
             job = ProcessingJob.query.get(job_id)
             if job:
                 job.status = 'failed'
@@ -426,31 +423,30 @@ def _process_dataset_background(job_id, dataset_id, steps, session_id):
 def get_job_status(job_id):
     """Get status of a processing job"""
     if job_id not in processing_jobs:
-        job = ProcessingJob.query.get(job_id)
-        if not job:
-            return create_response({'error': 'Job not found'}, 404)
-        
-        # Try to reconstruct from database
-        job_data = {
-            'id': job.id,
-            'dataset_id': job.dataset_id,
-            'status': job.status,
-            'progress': job.progress,
-            'created_at': job.created_at.isoformat() if job.created_at else None,
-            'completed_at': job.completed_at.isoformat() if job.completed_at else None
-        }
-        
-        if job.results:
-            try:
-                job_data['result'] = json.loads(job.results)
-            except:
-                job_data['result'] = job.results
-        
-        return create_response(job_data)
+        with app.app_context():
+            job = ProcessingJob.query.get(job_id)
+            if not job:
+                return create_response({'error': 'Job not found'}, 404)
+            
+            job_data = {
+                'id': job.id,
+                'dataset_id': job.dataset_id,
+                'status': job.status,
+                'progress': job.progress,
+                'created_at': job.created_at.isoformat() if job.created_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None
+            }
+            
+            if job.results:
+                try:
+                    job_data['result'] = json.loads(job.results)
+                except:
+                    job_data['result'] = job.results
+            
+            return create_response(job_data)
     
     job_data = processing_jobs[job_id].copy()
     
-    # Convert datetime objects to strings for JSON serialization
     if 'created_at' in job_data and isinstance(job_data['created_at'], datetime):
         job_data['created_at'] = job_data['created_at'].isoformat()
     if 'completed_at' in job_data and isinstance(job_data['completed_at'], datetime):
@@ -458,15 +454,14 @@ def get_job_status(job_id):
     
     return create_response(job_data)
 
-# NOTE: MAKE SURE THIS IS THE ONLY compare_models FUNCTION DEFINED
-# If you have another one, remove it!
 @app.route('/dataset/<dataset_id>/compare', methods=['POST'])
 def compare_models(dataset_id):
     """Compare models before and after preprocessing"""
     try:
-        dataset = Dataset.query.get(dataset_id)
-        if not dataset:
-            return create_response({'error': 'Dataset not found'}, 404)
+        with app.app_context():
+            dataset = Dataset.query.get(dataset_id)
+            if not dataset:
+                return create_response({'error': 'Dataset not found'}, 404)
         
         data = request.json or {}
         processed_file = data.get('processed_file')
@@ -475,17 +470,14 @@ def compare_models(dataset_id):
         if not processed_file:
             return create_response({'error': 'Processed file not specified'}, 400)
         
-        # Load original dataset
         original_df = read_dataset_file(dataset.filename)
         
-        # Load processed dataset
         processed_path = os.path.join(app.config['PROCESSED_FOLDER'], processed_file)
         if not os.path.exists(processed_path):
             return create_response({'error': 'Processed file not found'}, 404)
         
         processed_df = pd.read_csv(processed_path)
         
-        # Compare models
         comparator = ModelComparator()
         comparison_result = comparator.compare_datasets(
             original_df, processed_df, target_column
@@ -494,13 +486,12 @@ def compare_models(dataset_id):
         if comparison_result['status'] == 'error':
             return create_response({'error': comparison_result.get('error', 'Comparison failed')}, 500)
         
-        # Track comparison
         session_id = get_or_create_session_id()
         analytics.track_dataset_action(
             session_id=session_id,
             dataset_id=dataset_id,
             action='compare',
-            processing_time=1.0,  # Estimate
+            processing_time=1.0,
             rows=len(original_df),
             columns=len(original_df.columns)
         )
@@ -521,19 +512,15 @@ def compare_models(dataset_id):
 def download_file(filename):
     """Download a file"""
     try:
-        # Check in processed folder first
         filepath = os.path.join(app.config['PROCESSED_FOLDER'], filename)
         if not os.path.exists(filepath):
-            # Check in uploads folder
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             if not os.path.exists(filepath):
                 return create_response({'error': 'File not found'}, 404)
         
-        # Track download
         session_id = get_or_create_session_id()
         track_request('download', 'file_download', {'filename': filename})
         
-        # Extract dataset ID from filename for tracking
         if filename.startswith('processed_'):
             dataset_id = filename.replace('processed_', '').replace('.csv', '')
             analytics.track_dataset_action(
@@ -551,38 +538,39 @@ def download_file(filename):
 
 @app.route('/api/analytics/dashboard', methods=['GET'])
 def get_analytics_dashboard():
-    """Get analytics dashboard data (requires admin token)"""
+    """Get analytics dashboard data"""
     try:
-        # Simple authentication (in production, use proper auth)
         auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
+        if not auth_token or auth_token != 'admin123':
             return create_response({'error': 'Unauthorized'}, 401)
         
-        # Get stats
         stats = analytics.get_dashboard_stats(days=30)
         
-        # Get recent jobs from database
-        recent_jobs = ProcessingJob.query.order_by(
-            ProcessingJob.created_at.desc()
-        ).limit(10).all()
-        
-        jobs_data = []
-        for job in recent_jobs:
-            jobs_data.append({
-                'id': job.id[:8],
-                'dataset_id': job.dataset_id[:8] if job.dataset_id else None,
-                'status': job.status,
-                'progress': job.progress,
-                'created_at': job.created_at.isoformat() if job.created_at else None,
-                'completed_at': job.completed_at.isoformat() if job.completed_at else None
-            })
+        with app.app_context():
+            recent_jobs = ProcessingJob.query.order_by(
+                ProcessingJob.created_at.desc()
+            ).limit(10).all()
+            
+            jobs_data = []
+            for job in recent_jobs:
+                jobs_data.append({
+                    'id': job.id[:8],
+                    'dataset_id': job.dataset_id[:8] if job.dataset_id else None,
+                    'status': job.status,
+                    'progress': job.progress,
+                    'created_at': job.created_at.isoformat() if job.created_at else None,
+                    'completed_at': job.completed_at.isoformat() if job.completed_at else None
+                })
+            
+            total_datasets = Dataset.query.count()
+            total_jobs = ProcessingJob.query.count()
         
         return create_response({
             'success': True,
             'stats': stats,
             'recent_jobs': jobs_data,
-            'total_datasets_db': Dataset.query.count(),
-            'total_jobs_db': ProcessingJob.query.count(),
+            'total_datasets_db': total_datasets,
+            'total_jobs_db': total_jobs,
             'generated_at': datetime.utcnow().isoformat()
         })
         
@@ -591,17 +579,13 @@ def get_analytics_dashboard():
 
 @app.route('/api/analytics/export', methods=['GET'])
 def export_analytics():
-    """Export analytics data as CSV (requires admin token)"""
+    """Export analytics data as CSV"""
     try:
-        # Simple authentication
         auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
+        if not auth_token or auth_token != 'admin123':
             return create_response({'error': 'Unauthorized'}, 401)
         
-        # Get format parameter
         format_type = request.args.get('format', 'csv')
-        
-        # Export data
         exported_data = analytics.export_analytics(format=format_type)
         
         if not exported_data:
@@ -623,31 +607,6 @@ def export_analytics():
     except Exception as e:
         return create_response({'error': str(e)}, 500)
 
-@app.route('/api/analytics/cleanup', methods=['POST'])
-def cleanup_analytics():
-    """Clean up old analytics data (requires admin token)"""
-    try:
-        # Simple authentication
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != 'admin123':  # CHANGE THIS IN PRODUCTION
-            return create_response({'error': 'Unauthorized'}, 401)
-        
-        data = request.json or {}
-        days = data.get('days', 90)
-        
-        success = analytics.cleanup_old_data(days=days)
-        
-        if success:
-            return create_response({
-                'success': True,
-                'message': f'Cleaned up data older than {days} days'
-            })
-        else:
-            return create_response({'error': 'Cleanup failed'}, 500)
-        
-    except Exception as e:
-        return create_response({'error': str(e)}, 500)
-
 @app.route('/api/track', methods=['POST'])
 def track_event():
     """Track custom events from frontend"""
@@ -662,7 +621,6 @@ def track_event():
         
         response_data = {'success': success, 'session_id': session_id}
         
-        # Set session cookie if new session
         response = jsonify(response_data)
         if not request.cookies.get('session_id'):
             response.set_cookie('session_id', session_id, max_age=30*24*60*60)
@@ -691,4 +649,9 @@ def too_large(error):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    
+    if os.environ.get('RENDER'):
+        print("Running in production mode on Render")
+    else:
+        print(f"Starting Flask development server on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=debug)
